@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "prtracker-dashboard",
+      "runtimeExecutable": "/Users/antony/Documents/pr-monitor/venv/bin/uvicorn",
+      "runtimeArgs": ["app:app", "--host", "127.0.0.1", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

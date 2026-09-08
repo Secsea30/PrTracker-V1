@@ -1,0 +1,16 @@
+.env
+venv/
+state.json
+mode_state.json
+users.json
+history.json
+health.json
+analytics_events.json
+tracked_pages.json
+recipients.json
+.DS_Store
+.ssh/
+preview.html
+__pycache__/
+*.pyc
+credentials*

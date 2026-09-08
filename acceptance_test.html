@@ -1,0 +1,313 @@
+<title>PRTracker Acceptance Test</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  :root {
+    --paper: #f2f3f6;
+    --paper-raised: #ffffff;
+    --ink: #191c22;
+    --ink-soft: #565c68;
+    --ink-faint: #8a8f9b;
+    --line: #dfe2e8;
+    --navy: #1e3a5f;
+    --navy-soft: #e9eff6;
+    --pass: #1e7a4c;
+    --pass-soft: #e5f3ec;
+    --fail: #b24e1f;
+    --fail-soft: #fbece4;
+    --pending: #8a8f9b;
+    --pending-soft: #eceef1;
+    --shadow: 0 1px 2px rgba(25,28,34,0.04), 0 8px 24px rgba(25,28,34,0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14161b;
+      --paper-raised: #1b1e25;
+      --ink: #e9eaee;
+      --ink-soft: #a4a9b4;
+      --ink-faint: #6b7078;
+      --line: #2a2d35;
+      --navy: #7fa8d6;
+      --navy-soft: rgba(127,168,214,0.12);
+      --pass: #4caf82;
+      --pass-soft: rgba(76,175,130,0.12);
+      --fail: #e0985f;
+      --fail-soft: rgba(224,152,95,0.12);
+      --pending: #868c98;
+      --pending-soft: rgba(134,140,152,0.1);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14161b;
+    --paper-raised: #1b1e25;
+    --ink: #e9eaee;
+    --ink-soft: #a4a9b4;
+    --ink-faint: #6b7078;
+    --line: #2a2d35;
+    --navy: #7fa8d6;
+    --navy-soft: rgba(127,168,214,0.12);
+    --pass: #4caf82;
+    --pass-soft: rgba(76,175,130,0.12);
+    --fail: #e0985f;
+    --fail-soft: rgba(224,152,95,0.12);
+    --pending: #868c98;
+    --pending-soft: rgba(134,140,152,0.1);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Public Sans', -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 100px; }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--navy); margin: 0 0 10px;
+  }
+  h1 {
+    font-family: 'Sora', sans-serif; font-weight: 700; font-size: clamp(26px, 4vw, 34px);
+    margin: 0 0 8px; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .subhead { color: var(--ink-soft); font-size: 15px; margin: 0 0 4px; max-width: 62ch; }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 18px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-faint);
+  }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* --- Summary --- */
+  .summary {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 22px 24px; margin: 32px 0 40px;
+  }
+  .summary-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .readiness-label { font-family: 'Sora', sans-serif; font-weight: 600; font-size: 15px; }
+  .readiness-frac { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .bar-track { height: 8px; background: var(--pending-soft); border-radius: 5px; overflow: hidden; margin: 14px 0 18px; display: flex; }
+  .bar-seg { height: 100%; }
+  .bar-seg.pass { background: var(--pass); }
+  .bar-seg.fail { background: var(--fail); }
+  .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .stat {
+    border-radius: 10px; padding: 12px 14px; background: var(--paper);
+  }
+  .stat-num { font-family: 'IBM Plex Mono', monospace; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-lbl { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 3px; }
+  .stat.pass .stat-num { color: var(--pass); }
+  .stat.fail .stat-num { color: var(--fail); }
+  .stat.pending .stat-num { color: var(--pending); }
+
+  /* --- Groups & cases --- */
+  .group { margin-bottom: 36px; }
+  .group-title {
+    font-family: 'Sora', sans-serif; font-weight: 600; font-size: 17px; margin: 0 0 4px;
+  }
+  .group-sub { font-size: 13px; color: var(--ink-faint); margin: 0 0 16px; }
+
+  .case {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; align-items: start;
+    padding: 18px 0; border-top: 1px solid var(--line);
+  }
+  .group > .case:first-of-type { border-top: none; }
+  .case-id {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--navy);
+    background: var(--navy-soft); display: inline-block; padding: 2px 7px; border-radius: 5px;
+    margin-bottom: 8px; letter-spacing: 0.02em;
+  }
+  .case-desc { font-weight: 600; font-size: 14.5px; margin: 0 0 6px; }
+  .case-steps { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; margin: 0; max-width: 56ch; }
+  .case-steps b { color: var(--ink); font-weight: 600; }
+
+  .status-toggle {
+    display: flex; background: var(--paper); border: 1px solid var(--line);
+    border-radius: 9px; padding: 3px; gap: 3px; height: fit-content;
+  }
+  .status-toggle button {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.03em; border: none; background: transparent; color: var(--ink-faint);
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .status-toggle button:hover { background: var(--pending-soft); color: var(--ink); }
+  .status-toggle button.active[data-v="pass"] { background: var(--pass); color: #fff; }
+  .status-toggle button.active[data-v="fail"] { background: var(--fail); color: #fff; }
+  .status-toggle button:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+
+  .sync-note {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-faint);
+    text-align: center; margin-top: 40px; opacity: 0.8;
+  }
+
+  @media (max-width: 540px) {
+    .case { grid-template-columns: 1fr; }
+    .status-toggle { justify-content: flex-start; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Go-live checklist</p>
+  <h1>PRTracker Acceptance Test</h1>
+  <p class="subhead">Verifying the press-release monitor works as intended before it becomes the team's actual alert system, not just Antony's local test.</p>
+  <div class="meta-row">
+    <span><b>Target:</b> mohamedbinzayed.ae/en/latest-news-listing</span>
+    <span><b>Recipients:</b> Antony, Rad, Mohanad, Bana</span>
+    <span><b>Rev:</b> 2026-09-07</span>
+  </div>
+
+  <div class="summary">
+    <div class="summary-top">
+      <span class="readiness-label">Overall readiness</span>
+      <span class="readiness-frac" id="readinessFrac">0 / 18 tested</span>
+    </div>
+    <div class="bar-track"><div class="bar-seg pass" id="barPass"></div><div class="bar-seg fail" id="barFail"></div></div>
+    <div class="stat-row">
+      <div class="stat pass"><div class="stat-num" id="countPass">0</div><div class="stat-lbl">Passed</div></div>
+      <div class="stat fail"><div class="stat-num" id="countFail">0</div><div class="stat-lbl">Failed</div></div>
+      <div class="stat pending"><div class="stat-num" id="countPending">18</div><div class="stat-lbl">Pending</div></div>
+    </div>
+  </div>
+
+  <div id="groups"></div>
+
+  <p class="sync-note">Shared checklist — updates here are visible to everyone who opens this page.</p>
+</div>
+
+<script>
+  const GROUPS = [
+    {
+      title: "Detection &amp; email alerts",
+      sub: "Does a real change on the site actually reach the team's inbox, correctly?",
+      cases: [
+        { id: "AT-01", desc: "New press release triggers an email", steps: "Wait for (or simulate) a new article on the tracked page. <b>Expect:</b> an email arrives within one check cycle of it appearing." },
+        { id: "AT-02", desc: "Email content is correct", steps: "Open the alert email. <b>Expect:</b> the article title, a screenshot of the article, and a working \"View press release\" link that opens the real article." },
+        { id: "AT-03", desc: "Timestamps are in local time", steps: "Check the email's \"Change detected at\" and \"Email sent at\" lines. <b>Expect:</b> both show Gulf Standard Time (GST), not UTC." },
+        { id: "AT-04", desc: "All four people receive it", steps: "Confirm with Rad, Mohanad, and Bana. <b>Expect:</b> every recipient got the same email, none in spam." },
+      ],
+    },
+    {
+      title: "Comfort &amp; Sport mode",
+      sub: "Does the check-frequency control actually change behavior, not just the display?",
+      cases: [
+        { id: "AT-05", desc: "Comfort mode is the default", steps: "Open the dashboard fresh. <b>Expect:</b> Comfort Mode is active, checking every 10 minutes." },
+        { id: "AT-06", desc: "Sport mode speeds up checking", steps: "Click \"Sport &middot; 2 min\". <b>Expect:</b> the badge switches to Sport Mode and checks start happening roughly every 2 minutes." },
+        { id: "AT-07", desc: "Sport mode auto-reverts", steps: "Leave Sport Mode running. <b>Expect:</b> it switches back to Comfort Mode on its own after 30 minutes, without anyone touching it." },
+        { id: "AT-08", desc: "Any team member can trigger it", steps: "Have Rad or Mohanad sign in and activate Sport Mode. <b>Expect:</b> it works from their own account, not just Antony's." },
+      ],
+    },
+    {
+      title: "Health monitoring",
+      sub: "Will the team actually find out if the tool quietly breaks?",
+      cases: [
+        { id: "AT-09", desc: "Healthy status under normal use", steps: "Check the dashboard during normal operation. <b>Expect:</b> \"Health status\" shows the green happy-face icon and \"Healthy\"." },
+        { id: "AT-10", desc: "Failure alert actually fires", steps: "Cause (or simulate) 3 failed checks in a row. <b>Expect:</b> a red \"health alert\" email goes out to the team, and the icon changes to the dead face." },
+      ],
+    },
+    {
+      title: "Dashboard access",
+      sub: "Can each person actually get in with their own account?",
+      cases: [
+        { id: "AT-11", desc: "Each person can sign in", steps: "Antony, Rad, Mohanad, and Bana each sign in with their own email + password. <b>Expect:</b> all four succeed independently." },
+        { id: "AT-12", desc: "Sign out actually locks access", steps: "Sign out, then try loading the dashboard again. <b>Expect:</b> redirected to the login page, not shown the dashboard." },
+        { id: "AT-13", desc: "Correct name shown when signed in", steps: "Look at the top-right of the header after signing in. <b>Expect:</b> it shows the name of whoever is actually signed in." },
+      ],
+    },
+    {
+      title: "Change history &amp; analytics",
+      sub: "Is the record of what happened accurate?",
+      cases: [
+        { id: "AT-14", desc: "Detected articles appear in history", steps: "After a real detection, check \"Change history\". <b>Expect:</b> the article is listed with the correct title, link, and local (GST) timestamps." },
+        { id: "AT-15", desc: "Usage analytics reflect real activity", steps: "Have a couple of team members use the dashboard, then check \"Usage analytics\". <b>Expect:</b> view counts and \"Recent activity\" match who actually did what." },
+      ],
+    },
+    {
+      title: "Reliability (the actual go-live gate)",
+      sub: "This is the section that decides whether PRTracker is ready to replace manual checking.",
+      cases: [
+        { id: "AT-16", desc: "Runs unattended over several days", steps: "Let the scheduler run continuously without manual restarts. <b>Expect:</b> it's still checking on schedule days later, with no gaps in Change history." },
+        { id: "AT-17", desc: "No alerts land in spam", steps: "Check spam/junk folders for all four recipients after a real alert. <b>Expect:</b> nothing filtered out." },
+        { id: "AT-18", desc: "Dashboard stays reachable", steps: "Check in on the dashboard at different points during the trial period. <b>Expect:</b> it's up and responsive every time, not crashed." },
+      ],
+    },
+  ];
+
+  const STATES = ["pending", "pass", "fail"];
+  let state = {};
+
+  function renderGroups() {
+    const el = document.getElementById("groups");
+    el.innerHTML = GROUPS.map(g => `
+      <div class="group">
+        <h2 class="group-title">${g.title}</h2>
+        <p class="group-sub">${g.sub}</p>
+        ${g.cases.map(c => `
+          <div class="case">
+            <div>
+              <span class="case-id">${c.id}</span>
+              <p class="case-desc">${c.desc}</p>
+              <p class="case-steps">${c.steps}</p>
+            </div>
+            <div class="status-toggle" role="group" aria-label="${c.id} status">
+              <button data-id="${c.id}" data-v="pending" class="${state[c.id] === 'pending' || !state[c.id] ? 'active' : ''}">PENDING</button>
+              <button data-id="${c.id}" data-v="pass" class="${state[c.id] === 'pass' ? 'active' : ''}">PASS</button>
+              <button data-id="${c.id}" data-v="fail" class="${state[c.id] === 'fail' ? 'active' : ''}">FAIL</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `).join("");
+
+    el.querySelectorAll(".status-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => setStatus(btn.dataset.id, btn.dataset.v));
+    });
+  }
+
+  function renderSummary() {
+    const ids = GROUPS.flatMap(g => g.cases.map(c => c.id));
+    const total = ids.length;
+    const pass = ids.filter(id => state[id] === "pass").length;
+    const fail = ids.filter(id => state[id] === "fail").length;
+    const pending = total - pass - fail;
+
+    document.getElementById("countPass").textContent = pass;
+    document.getElementById("countFail").textContent = fail;
+    document.getElementById("countPending").textContent = pending;
+    document.getElementById("readinessFrac").textContent = `${pass + fail} / ${total} tested`;
+    document.getElementById("barPass").style.width = (pass / total * 100) + "%";
+    document.getElementById("barFail").style.width = (fail / total * 100) + "%";
+  }
+
+  function renderAll() { renderGroups(); renderSummary(); }
+
+  let publishTimer = null;
+  function setStatus(id, value) {
+    state[id] = value;
+    renderAll();
+    clearTimeout(publishTimer);
+    publishTimer = setTimeout(publishState, 500);
+  }
+
+  async function publishState() {
+    try {
+      const artifact = await claude.use("artifact");
+      if (!artifact) return;
+      const doc = "<!doctype html>\n<html><head>" + document.head.innerHTML.replace(
+        /<script id="boot-state"[^>]*>[\s\S]*?<\/script>/, ""
+      ) + `<script id="boot-state" type="application/json">${JSON.stringify(state)}<\/script>` +
+      "</head><body>" + document.body.innerHTML + "</body></html>";
+      await artifact.publish(doc);
+    } catch (e) { /* not available in this view; local state still shown */ }
+  }
+
+  (function boot() {
+    const bootEl = document.getElementById("boot-state");
+    if (bootEl) {
+      try { state = JSON.parse(bootEl.textContent); } catch (e) { state = {}; }
+    }
+    renderAll();
+  })();
+</script>
