@@ -410,9 +410,10 @@ def render_tracked_pages() -> str:
     pages = tracked_pages_store.load_pages()
     rows = ""
     for page in pages:
+        filter_badge = f' <span class="mode-badge sport">Only: {page["keyword_filter"]}</span>' if page.get('keyword_filter') else ''
         rows += f"""
         <div class="page-row">
-          <div class="page-row-label">{page['label']}</div>
+          <div class="page-row-label">{page['label']}{filter_badge}</div>
           <a class="page-row-url" href="{page['url']}" target="_blank" rel="noopener">{page['url']}</a>
         </div>
         """
@@ -631,7 +632,7 @@ def dashboard(prtracker_session: str = Cookie(default=None)):
     body = f"""
     <div class="page-header">
       <div class="page-title">Dashboard</div>
-      <p class="page-subtitle">Monitoring mohamedbinzayed.ae for new press releases.</p>
+      <p class="page-subtitle">Monitoring {len(tracked_pages_store.load_pages())} pages for new press releases.</p>
     </div>
 
     <div class="grid-top">
@@ -693,7 +694,7 @@ def settings_page(prtracker_session: str = Cookie(default=None)):
     page_rows = "".join(f"""
       <div class="settings-row">
         <div>
-          <div class="settings-row-main">{p['label']}</div>
+          <div class="settings-row-main">{p['label']}{f' <span class="mode-badge sport">Only: {p["keyword_filter"]}</span>' if p.get('keyword_filter') else ''}</div>
           <div class="settings-row-sub">{p['url']}</div>
         </div>
         <form method="post" action="/settings/pages/remove">
@@ -733,11 +734,12 @@ def settings_page(prtracker_session: str = Cookie(default=None)):
         </div>
         {page_rows}
         <form class="add-form" method="post" action="/settings/pages/add">
-          <input type="text" name="label" placeholder="Label, e.g. Arabic News" required style="flex:0.6;">
+          <input type="text" name="label" placeholder="Label, e.g. Arabic News" required style="flex:0.5;">
           <input type="url" name="url" placeholder="https://..." required>
+          <input type="text" name="keyword_filter" placeholder="Only alert if this word appears (optional)" style="flex:0.8;">
           <button type="submit">Add</button>
         </form>
-        <p class="settings-hint">New pages should be another listing page on mohamedbinzayed.ae with the same layout as the current one. A page from a different site needs extra setup first — ask Claude to add it properly rather than adding it here.</p>
+        <p class="settings-hint">New pages should be another listing page on mohamedbinzayed.ae with the same layout as the current one. A page from a genuinely different site needs its structure investigated first — ask Claude to add it properly rather than adding it here.</p>
       </div>
     </div>
     """
@@ -761,10 +763,15 @@ def remove_recipient_route(prtracker_session: str = Cookie(default=None), email:
 
 
 @app.post("/settings/pages/add")
-def add_page_route(prtracker_session: str = Cookie(default=None), label: str = Form(...), url: str = Form(...)):
+def add_page_route(
+    prtracker_session: str = Cookie(default=None),
+    label: str = Form(...),
+    url: str = Form(...),
+    keyword_filter: str = Form(""),
+):
     if not get_current_user(prtracker_session):
         return RedirectResponse(url="/login", status_code=303)
-    tracked_pages_store.add_page(label, url)
+    tracked_pages_store.add_page(label, url, keyword_filter=keyword_filter.strip() or None)
     return RedirectResponse(url="/settings", status_code=303)
 
 

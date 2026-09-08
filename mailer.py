@@ -22,6 +22,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from urllib.parse import urlparse
 
 import localtime
 
@@ -68,12 +69,31 @@ def _fmt(dt) -> str:
     return localtime.format_local(dt, with_seconds=True)
 
 
+def _relative_source(url: str) -> str:
+    """"https://www.mohamedbinzayed.ae/en/latest-news-listing" -> "mohamedbinzayed.ae/en/latest-news-listing" """
+    parsed = urlparse(url)
+    host = parsed.netloc[4:] if parsed.netloc.startswith("www.") else parsed.netloc
+    return f"{host}{parsed.path}"
+
+
 def build_email(item: dict, sent_at, has_screenshot: bool = False) -> dict:
-    subject = f"New press release: {item['title']}"
+    source_prefix = f"[{item['source_label']}] " if item.get("source_label") else ""
+    subject = f"{source_prefix}New press release: {item['title']}"
 
     detected_at = item.get("detected_at")
     detected_str = _fmt(detected_at) if detected_at else None
     sent_str = _fmt(sent_at)
+
+    source_label = item.get("source_label")
+    accent_color = item.get("badge_color", "#1E3A5F")
+
+    source_badge_html = f"""
+    <span style="display:inline-block; padding: 3px 10px; margin-bottom: 12px; border-radius: 5px;
+                 font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                 background: {accent_color}; color: #ffffff;">
+      {source_label}
+    </span><br>
+    """ if source_label else ""
 
     screenshot_html = f"""
     <img src="cid:article_screenshot" alt="Screenshot of the article"
@@ -84,14 +104,15 @@ def build_email(item: dict, sent_at, has_screenshot: bool = False) -> dict:
     <div style="background:#f4f5f7; padding: 32px 16px; font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
       <div style="max-width: 560px; margin: 0 auto; background:#ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e8e9ec;">
 
-        <div style="height: 4px; background: #1E3A5F;"></div>
+        <div style="height: 4px; background: {accent_color};"></div>
 
         <div style="padding: 20px 32px; border-bottom: 1px solid #eceef1;">
-          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #1E3A5F;">PRTRACKER</span>
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: {accent_color};">PRTRACKER</span>
           <span style="font-size: 13px; color: #9599a3; margin-left: 8px;">New press release detected</span>
         </div>
 
         <div style="padding: 32px;">
+          {source_badge_html}
           <h1 style="margin: 0 0 16px; font-size: 21px; line-height: 1.4; color: #111318; font-weight: 600;">
             {item['title']}
           </h1>
@@ -108,7 +129,7 @@ def build_email(item: dict, sent_at, has_screenshot: bool = False) -> dict:
           </div>
 
           <a href="{item['url']}"
-             style="display:inline-block; padding: 12px 22px; background:#1E3A5F; color:#ffffff; text-decoration:none; border-radius: 8px; font-size: 14px; font-weight: 500;">
+             style="display:inline-block; padding: 12px 22px; background:{accent_color}; color:#ffffff; text-decoration:none; border-radius: 8px; font-size: 14px; font-weight: 500;">
             View press release &rarr;
           </a>
 
@@ -118,7 +139,7 @@ def build_email(item: dict, sent_at, has_screenshot: bool = False) -> dict:
         </div>
 
         <div style="padding: 16px 32px; background:#fafafa; border-top: 1px solid #eceef1;">
-          <span style="font-size: 11px; color: #b0b4bc;">Automated alert &middot; mohamedbinzayed.ae/en/latest-news-listing</span>
+          <span style="font-size: 11px; color: #b0b4bc;">Automated alert &middot; {_relative_source(item.get('source_url', item['url']))}</span>
         </div>
 
       </div>

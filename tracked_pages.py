@@ -14,8 +14,18 @@ from pathlib import Path
 
 TRACKED_PAGES_FILE = Path(__file__).parent / "tracked_pages.json"
 
+DEFAULT_LINK_PATTERN = "/latest-news-listing/"
+DEFAULT_BADGE_COLOR = "#475569"  # neutral slate, used when a page doesn't specify its own
+
 DEFAULT_PAGES = [
-    {"label": "Latest News", "url": "https://www.mohamedbinzayed.ae/en/latest-news-listing"},
+    {
+        "label": "Latest News",
+        "url": "https://www.mohamedbinzayed.ae/en/latest-news-listing",
+        "link_pattern": DEFAULT_LINK_PATTERN,
+        "keyword_filter": None,
+        "source_label": "MBZ Site",
+        "badge_color": "#1E3A5F",  # the existing navy — unchanged for this source
+    },
 ]
 
 
@@ -30,11 +40,25 @@ def save_pages(pages: list[dict]) -> None:
     TRACKED_PAGES_FILE.write_text(json.dumps({"pages": pages}, indent=2))
 
 
-def add_page(label: str, url: str) -> None:
+def add_page(
+    label: str,
+    url: str,
+    link_pattern: str = DEFAULT_LINK_PATTERN,
+    keyword_filter: str = None,
+    source_label: str = None,
+    badge_color: str = DEFAULT_BADGE_COLOR,
+) -> None:
     pages = load_pages()
     if any(p["url"] == url for p in pages):
         return
-    pages.append({"label": label, "url": url})
+    pages.append({
+        "label": label,
+        "url": url,
+        "link_pattern": link_pattern,
+        "keyword_filter": keyword_filter or None,
+        "source_label": source_label or label,
+        "badge_color": badge_color,
+    })
     save_pages(pages)
 
 
