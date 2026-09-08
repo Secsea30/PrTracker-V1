@@ -47,6 +47,7 @@ def add_page(
     keyword_filter: str = None,
     source_label: str = None,
     badge_color: str = DEFAULT_BADGE_COLOR,
+    force_sport: bool = False,
 ) -> None:
     pages = load_pages()
     if any(p["url"] == url for p in pages):
@@ -58,6 +59,9 @@ def add_page(
         "keyword_filter": keyword_filter or None,
         "source_label": source_label or label,
         "badge_color": badge_color,
+        # If true, this page always checks at the Sport-mode interval,
+        # regardless of the dashboard's global Comfort/Sport toggle.
+        "force_sport": force_sport,
     })
     save_pages(pages)
 

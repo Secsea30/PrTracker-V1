@@ -1,13 +1,14 @@
 """
-Checks every tracked page and alerts on any new press release.
+Checks tracked pages and alerts on any new press release.
 
-Can be run standalone for a one-off check:
+Can be run standalone for a one-off check of everything:
     python checker.py
 
-Or imported by scheduler.py, which calls run_check() repeatedly on a timer
-(Comfort/Sport mode). run_check() never raises for an ordinary failure (e.g.
-a site being briefly unreachable) — it returns a status dict instead, so
-one bad check doesn't kill the long-running scheduler process.
+Or imported by scheduler.py, which calls check_one_page() per page on its
+own timer (each page can follow the global Comfort/Sport mode, or be
+pinned to always-fast via "force_sport" — see tracked_pages.py). A single
+bad check never raises — callers get a status dict back instead, so one
+failing page doesn't kill the long-running scheduler process.
 """
 
 from __future__ import annotations
@@ -131,78 +132,91 @@ def _finish(ok: bool, checked_at, new_items: list, error: str = None) -> dict:
     return {"ok": ok, "checked_at": checked_at, "new_items": new_items, "error": error}
 
 
-def run_check() -> dict:
-    """Checks every tracked page. Returns {"ok": bool, "new_items": [...], "error": str|None}.
-    "ok" is True as long as at least one page was checked successfully."""
+def check_one_page(tracked_page: dict) -> dict:
+    """Checks a single tracked page and returns {"ok", "new_items", "error"}.
+    Loads/saves state.json itself, so this is safe to call independently
+    per page on its own schedule."""
     checked_at = datetime.now(timezone.utc)
+    label = tracked_page["label"]
+    url = tracked_page["url"]
+    link_pattern = tracked_page.get("link_pattern") or tracked_pages_store.DEFAULT_LINK_PATTERN
+    keyword_filter = tracked_page.get("keyword_filter")
+    print(f"[{checked_at.isoformat()}] Checking {label} ({url}) ...")
+
     state = load_state()
     state.setdefault("pages", {})
 
+    try:
+        items = fetch_news_items(url, link_pattern)
+    except Exception as e:
+        error = f"{label}: {e}"
+        print(f"ERROR: check failed for {label}: {e}")
+        return _finish(False, checked_at, [], error)
+
+    if not items:
+        error = f"{label}: no items found — the page structure may have changed"
+        print(f"WARNING: {error}")
+        return _finish(False, checked_at, [], error)
+
+    page_state = state["pages"].setdefault(url, {"seen_urls": []})
+    seen = set(page_state["seen_urls"])
+    new_items = [i for i in items if i["url"] not in seen]
+    alerted_items: list[dict] = []
+
+    if not seen:
+        print(f"First run for {label} — recording {len(items)} existing items as the baseline (not alerting on these).")
+    elif new_items:
+        print(f"\n*** {len(new_items)} NEW ITEM(S) FOUND on {label} ***")
+        for item in new_items:
+            if keyword_filter and not _matches_keyword(item, keyword_filter):
+                print(f"- (skipped, no match for {keyword_filter!r}) {item['title']}")
+                continue
+            item["detected_at"] = checked_at
+            item["page_label"] = label
+            item["source_label"] = tracked_page.get("source_label", label)
+            item["badge_color"] = tracked_page.get("badge_color", tracked_pages_store.DEFAULT_BADGE_COLOR)
+            item["source_url"] = url
+            print(f"- {item['title']}\n  {item['url']}")
+            screenshot_bytes = capture_screenshot(item["url"])
+            sent_at = send_alert(item, screenshot_bytes)
+            append_history({
+                "title": item["title"],
+                "url": item["url"],
+                "page_label": label,
+                "source_label": item["source_label"],
+                "badge_color": item["badge_color"],
+                "detected_at": checked_at.isoformat(),
+                "sent_at": sent_at.isoformat(),
+            })
+            alerted_items.append(item)
+    else:
+        print(f"No new items on {label}.")
+
+    # Every item seen this check counts as "seen" going forward, whether or
+    # not it matched the keyword filter — otherwise a skipped item would
+    # get re-evaluated (and its body re-fetched) on every future check.
+    page_state["seen_urls"] = list(seen | {i["url"] for i in items})
+    save_state(state)
+
+    return _finish(True, checked_at, alerted_items, None)
+
+
+def run_check() -> dict:
+    """Checks every tracked page, one after another. Used for manual/standalone
+    runs (`python checker.py`) — the scheduler checks pages independently instead."""
     all_new_items: list[dict] = []
     any_success = False
     last_error = None
 
     for tracked_page in tracked_pages_store.load_pages():
-        label = tracked_page["label"]
-        url = tracked_page["url"]
-        link_pattern = tracked_page.get("link_pattern") or tracked_pages_store.DEFAULT_LINK_PATTERN
-        keyword_filter = tracked_page.get("keyword_filter")
-        print(f"[{checked_at.isoformat()}] Checking {label} ({url}) ...")
-
-        try:
-            items = fetch_news_items(url, link_pattern)
-        except Exception as e:
-            last_error = f"{label}: {e}"
-            print(f"ERROR: check failed for {label}: {e}")
-            continue
-
-        if not items:
-            last_error = f"{label}: no items found — the page structure may have changed"
-            print(f"WARNING: {last_error}")
-            continue
-
-        any_success = True
-        page_state = state["pages"].setdefault(url, {"seen_urls": []})
-        seen = set(page_state["seen_urls"])
-        new_items = [i for i in items if i["url"] not in seen]
-
-        if not seen:
-            print(f"First run for {label} — recording {len(items)} existing items as the baseline (not alerting on these).")
-        elif new_items:
-            print(f"\n*** {len(new_items)} NEW ITEM(S) FOUND on {label} ***")
-            for item in new_items:
-                if keyword_filter and not _matches_keyword(item, keyword_filter):
-                    print(f"- (skipped, no match for {keyword_filter!r}) {item['title']}")
-                    continue
-                item["detected_at"] = checked_at
-                item["page_label"] = label
-                item["source_label"] = tracked_page.get("source_label", label)
-                item["badge_color"] = tracked_page.get("badge_color", tracked_pages_store.DEFAULT_BADGE_COLOR)
-                item["source_url"] = url
-                print(f"- {item['title']}\n  {item['url']}")
-                screenshot_bytes = capture_screenshot(item["url"])
-                sent_at = send_alert(item, screenshot_bytes)
-                append_history({
-                    "title": item["title"],
-                    "url": item["url"],
-                    "page_label": label,
-                    "source_label": item["source_label"],
-                    "badge_color": item["badge_color"],
-                    "detected_at": checked_at.isoformat(),
-                    "sent_at": sent_at.isoformat(),
-                })
-                all_new_items.append(item)
+        result = check_one_page(tracked_page)
+        if result["ok"]:
+            any_success = True
+            all_new_items.extend(result["new_items"])
         else:
-            print(f"No new items on {label}.")
+            last_error = result["error"]
 
-        # Every item seen this check counts as "seen" going forward, whether or
-        # not it matched the keyword filter — otherwise a skipped item would
-        # get re-evaluated (and its body re-fetched) on every future check.
-        page_state["seen_urls"] = list(seen | {i["url"] for i in items})
-
-    save_state(state)
-
-    return _finish(any_success, checked_at, all_new_items, None if any_success else last_error)
+    return {"ok": any_success, "new_items": all_new_items, "error": None if any_success else last_error}
 
 
 if __name__ == "__main__":

@@ -408,13 +408,16 @@ def render_history(limit: int = 15) -> str:
 
 def render_tracked_pages() -> str:
     pages = tracked_pages_store.load_pages()
+    global_interval = mode.get_status()["interval_seconds"] // 60
     rows = ""
     for page in pages:
         filter_badge = f' <span class="mode-badge sport">Only: {page["keyword_filter"]}</span>' if page.get('keyword_filter') else ''
+        pace = "always every 2 min" if page.get("force_sport") else f"every {global_interval} min (follows toggle)"
         rows += f"""
         <div class="page-row">
           <div class="page-row-label">{page['label']}{filter_badge}</div>
           <a class="page-row-url" href="{page['url']}" target="_blank" rel="noopener">{page['url']}</a>
+          <div class="settings-row-sub" style="margin-top:2px;">{pace}</div>
         </div>
         """
     count = len(pages)
