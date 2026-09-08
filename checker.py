@@ -64,13 +64,22 @@ def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
 
 
 def fetch_article_text(url: str) -> str:
-    """Grabs the visible text of an article page, for checking a keyword filter against the body."""
+    """Grabs the article's own text, for checking a keyword filter against the body.
+
+    Scoped to the <article> element rather than the whole page: the full page
+    body also includes sidebar widgets like "Related" or "Latest News", whose
+    unrelated headlines can otherwise leak into the keyword check and cause
+    false-positive alerts for articles that never actually mention it.
+    """
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page(user_agent=USER_AGENT)
             page.goto(url, wait_until="networkidle", timeout=30_000)
-            text = page.inner_text("body")
+            if page.locator("article").count() > 0:
+                text = page.locator("article").first.inner_text()
+            else:
+                text = page.inner_text("body")
             browser.close()
             return text
     except Exception as e:
