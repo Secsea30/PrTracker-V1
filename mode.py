@@ -46,6 +46,15 @@ def get_status() -> dict:
     return {**state, "interval_seconds": interval}
 
 
+def interval_for(tracked_page: dict) -> int:
+    """A tracked page's actual check interval: pinned to Sport-mode speed if
+    the page has "force_sport" set (see tracked_pages.py), otherwise
+    following the global Comfort/Sport toggle."""
+    if tracked_page.get("force_sport"):
+        return SPORT_INTERVAL_SECONDS
+    return get_status()["interval_seconds"]
+
+
 def enable_sport_mode() -> dict:
     expires_at = datetime.now(timezone.utc) + SPORT_MAX_DURATION
     state = {"mode": "sport", "sport_expires_at": expires_at.isoformat()}

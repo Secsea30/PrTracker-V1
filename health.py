@@ -2,6 +2,13 @@
 Tracks whether the checker is actually working — what the dashboard's
 "Health status" section reads from, and what triggers a "PRTracker is
 broken" alert email if checks start failing repeatedly.
+
+Keyed per tracked page (by its url), not globally. A shared/global counter
+would let one broken page hide behind another healthy one — e.g. WAM's
+scraper failing repeatedly would keep getting silently reset back to zero
+every time MBZ's next check happened to succeed, so the dashboard would
+keep showing "Healthy" and the failure-alert email might never fire even
+though WAM tracking had been dead for days.
 """
 
 from __future__ import annotations
@@ -12,13 +19,12 @@ from pathlib import Path
 
 HEALTH_FILE = Path(__file__).parent / "health.json"
 
-# After this many failed checks in a row, send one alert email (not one per failure).
+# After this many failed checks in a row (for a given page), send one alert
+# email for that page (not one per failure).
 FAILURE_ALERT_THRESHOLD = 3
 
 
-def _load() -> dict:
-    if HEALTH_FILE.exists():
-        return json.loads(HEALTH_FILE.read_text())
+def _default_page_state() -> dict:
     return {
         "last_check_at": None,
         "last_success_at": None,
@@ -28,18 +34,32 @@ def _load() -> dict:
     }
 
 
+def _load() -> dict:
+    if HEALTH_FILE.exists():
+        return json.loads(HEALTH_FILE.read_text())
+    return {}
+
+
 def _save(state: dict) -> None:
     HEALTH_FILE.write_text(json.dumps(state, indent=2))
 
 
-def get_health() -> dict:
+def get_health(page_url: str) -> dict:
+    """This one page's health state."""
+    return _load().get(page_url, _default_page_state())
+
+
+def get_all_health() -> dict:
+    """Every tracked page's health state, keyed by page url."""
     return _load()
 
 
-def record_check(ok: bool, error: str = None) -> dict:
-    """Call after every check attempt. Returns the updated health state, plus
-    "should_alert": True exactly once when failures just crossed the threshold."""
-    state = _load()
+def record_check(page_url: str, ok: bool, error: str = None) -> dict:
+    """Call after every check attempt for a page. Returns that page's updated
+    health state, plus "should_alert": True exactly once when its failures
+    just crossed the threshold."""
+    all_state = _load()
+    state = all_state.get(page_url, _default_page_state())
     now = datetime.now(timezone.utc).isoformat()
     state["last_check_at"] = now
 
@@ -57,5 +77,6 @@ def record_check(ok: bool, error: str = None) -> dict:
             should_alert = True
             state["already_alerted"] = True
 
-    _save(state)
+    all_state[page_url] = state
+    _save(all_state)
     return {**state, "should_alert": should_alert}

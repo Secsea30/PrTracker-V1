@@ -227,6 +227,9 @@ BASE_STYLE = """
   .history-meta { font-size: 12px; color: var(--muted-2); margin-top: 3px; }
 
   /* --- Health --- */
+  .health-page-block { padding: 14px 0; border-top: 1px solid var(--divider); }
+  .health-page-block:first-child { border-top: none; padding-top: 0; }
+  .health-page-label { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
   .health-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .dot-healthy { background: #1E7A4C; }
@@ -340,14 +343,16 @@ def time_ago(iso_str: str) -> str:
     return f"{hours} hr {minutes % 60} min ago"
 
 
-def get_health_level() -> str:
-    """Returns "unknown" | "healthy" | "degraded" | "down" — shared by the
-    Health status text and the face icon so they always agree."""
-    state = health.get_health()
+def _health_level_for(state: dict, tracked_page: dict) -> str:
+    """Returns "unknown" | "healthy" | "degraded" | "down" for one tracked
+    page's health state — shared by the Health status text and the face icon
+    so they always agree. Staleness is judged against that page's own actual
+    check interval (mode.interval_for), not the global toggle, since a
+    force_sport page like WAM checks faster than Comfort mode implies."""
     if not state.get("last_check_at"):
         return "unknown"
 
-    current_interval = mode.get_status()["interval_seconds"]
+    current_interval = mode.interval_for(tracked_page)
     failures = state.get("consecutive_failures", 0)
     seconds_since_check = (datetime.now(timezone.utc) - datetime.fromisoformat(state["last_check_at"])).total_seconds()
     stale = seconds_since_check > current_interval * 3
@@ -360,38 +365,68 @@ def get_health_level() -> str:
         return "down"
 
 
-def render_health() -> str:
-    state = health.get_health()
-    level = get_health_level()
+def worst_health_level() -> str:
+    """The single icon shown next to the "Health status" title reflects the
+    worst level across all tracked pages, so one broken page can't hide
+    behind another healthy one there either."""
+    pages = tracked_pages_store.load_pages()
+    if not pages:
+        return "unknown"
+    all_health = health.get_all_health()
+    levels = {_health_level_for(all_health.get(p["url"], {}), p) for p in pages}
+    for level in ("down", "degraded", "unknown"):
+        if level in levels:
+            return level
+    return "healthy"
 
-    if level == "unknown":
+
+def render_health() -> str:
+    pages = tracked_pages_store.load_pages()
+    all_health = health.get_all_health()
+
+    if not any(all_health.get(p["url"], {}).get("last_check_at") for p in pages):
         return '<p class="placeholder">No checks have run yet — this fills in once the scheduler starts.</p>'
 
-    dot, label = {
-        "healthy": ("dot-healthy", "Healthy"),
-        "degraded": ("dot-degraded", "Degraded — some checks failing"),
-        "down": ("dot-down", "Not running normally"),
-    }[level]
+    blocks = ""
+    for page in pages:
+        state = all_health.get(page["url"], {})
+        level = _health_level_for(state, page)
 
-    last_success_line = (
-        f"Last successful check: {time_ago(state['last_success_at'])}"
-        if state.get("last_success_at") else "No successful check recorded yet"
-    )
-    last_check_line = f"Last check attempt: {time_ago(state['last_check_at'])}"
+        if level == "unknown":
+            dot, label = ("dot-degraded", "No checks yet")
+        else:
+            dot, label = {
+                "healthy": ("dot-healthy", "Healthy"),
+                "degraded": ("dot-degraded", "Degraded — some checks failing"),
+                "down": ("dot-down", "Not running normally"),
+            }[level]
 
-    error_html = ""
-    if state.get("last_error"):
-        error_html = f'<div class="health-error">Last error: {state["last_error"]}</div>'
+        last_success_line = (
+            f"Last successful check: {time_ago(state['last_success_at'])}"
+            if state.get("last_success_at") else "No successful check recorded yet"
+        )
+        last_check_line = (
+            f"Last check attempt: {time_ago(state['last_check_at'])}"
+            if state.get("last_check_at") else "Not checked yet"
+        )
 
-    return f"""
-    <div class="health-row">
-      <div class="dot {dot}"></div>
-      <div class="health-status-text">{label}</div>
-    </div>
-    <div class="health-detail">{last_success_line}</div>
-    <div class="health-detail">{last_check_line}</div>
-    {error_html}
-    """
+        error_html = ""
+        if state.get("last_error"):
+            error_html = f'<div class="health-error">Last error: {state["last_error"]}</div>'
+
+        blocks += f"""
+        <div class="health-page-block">
+          <div class="health-page-label">{page['label']}</div>
+          <div class="health-row">
+            <div class="dot {dot}"></div>
+            <div class="health-status-text">{label}</div>
+          </div>
+          <div class="health-detail">{last_success_line}</div>
+          <div class="health-detail">{last_check_line}</div>
+          {error_html}
+        </div>
+        """
+    return blocks
 
 
 def render_history(limit: int = 15) -> str:
@@ -643,7 +678,7 @@ def dashboard(prtracker_session: str = Cookie(default=None)):
         "healthy": ICON_FACE_HAPPY,
         "degraded": ICON_FACE_SICK,
         "down": ICON_FACE_DEAD,
-    }[get_health_level()]
+    }[worst_health_level()]
 
     globe_class = "icon-spin" if tracked_pages_store.load_pages() else ""
 

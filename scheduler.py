@@ -25,12 +25,6 @@ from checker import check_one_page
 TICK_SECONDS = 5
 
 
-def _interval_for(tracked_page: dict) -> int:
-    if tracked_page.get("force_sport"):
-        return mode.SPORT_INTERVAL_SECONDS
-    return mode.get_status()["interval_seconds"]
-
-
 def main():
     print("PRTracker scheduler starting.")
     last_checked_at: dict[str, float] = {}  # keyed by page url
@@ -40,7 +34,7 @@ def main():
 
         for tracked_page in tracked_pages_store.load_pages():
             url = tracked_page["url"]
-            interval = _interval_for(tracked_page)
+            interval = mode.interval_for(tracked_page)
             last = last_checked_at.get(url)
             due = last is None or (now - last) >= interval
 

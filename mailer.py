@@ -215,8 +215,8 @@ def send_alert(item: dict, screenshot_bytes: bytes = None) -> datetime:
     return sent_at
 
 
-def build_health_alert_email(error: str, failure_count: int) -> dict:
-    subject = "PRTracker health alert — checks are failing"
+def build_health_alert_email(page_label: str, error: str, failure_count: int) -> dict:
+    subject = f"PRTracker health alert — {page_label} checks are failing"
     html = f"""
     <div style="background:#f4f5f7; padding: 32px 16px; font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
       <div style="max-width: 560px; margin: 0 auto; background:#ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e8e9ec;">
@@ -230,11 +230,11 @@ def build_health_alert_email(error: str, failure_count: int) -> dict:
 
         <div style="padding: 32px;">
           <h1 style="margin: 0 0 16px; font-size: 20px; line-height: 1.4; color: #111318; font-weight: 600;">
-            The checker has failed {failure_count} times in a row
+            {page_label} has failed {failure_count} times in a row
           </h1>
           <p style="margin: 0 0 16px; font-size: 14px; color: #6b7078;">
-            PRTracker may not be catching new press releases right now. This usually means the target site
-            changed something, or there's a network/server problem. Someone should take a look.
+            PRTracker may not be catching new press releases from {page_label} right now. This usually means
+            the target site changed something, or there's a network/server problem. Someone should take a look.
           </p>
           <p style="margin: 0; font-size: 13px; color: #9599a3; background:#fafafa; padding: 12px 16px; border-radius: 8px; word-break: break-word;">
             Last error: {error}
@@ -251,7 +251,7 @@ def build_health_alert_email(error: str, failure_count: int) -> dict:
     return {"subject": subject, "html": html}
 
 
-def send_health_alert(error: str, failure_count: int) -> None:
+def send_health_alert(page_label: str, error: str, failure_count: int) -> None:
     recipients = load_recipients()
-    email = build_health_alert_email(error, failure_count)
+    email = build_health_alert_email(page_label, error, failure_count)
     _dispatch(recipients, email)

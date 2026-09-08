@@ -131,13 +131,14 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def _finish(ok: bool, checked_at, new_items: list, error: str = None) -> dict:
-    """Records health for this check attempt, sending a health alert email if
-    failures just crossed the threshold, then returns the standard result dict."""
-    health_state = health.record_check(ok=ok, error=error)
+def _finish(page_url: str, page_label: str, ok: bool, checked_at, new_items: list, error: str = None) -> dict:
+    """Records health for this page's check attempt, sending a health alert
+    email if that page's failures just crossed the threshold, then returns
+    the standard result dict."""
+    health_state = health.record_check(page_url, ok=ok, error=error)
     if health_state["should_alert"]:
-        print(f"ALERT: {health_state['consecutive_failures']} failures in a row — sending health alert email.")
-        send_health_alert(error, health_state["consecutive_failures"])
+        print(f"ALERT: {page_label} has failed {health_state['consecutive_failures']} times in a row — sending health alert email.")
+        send_health_alert(page_label, error, health_state["consecutive_failures"])
     return {"ok": ok, "checked_at": checked_at, "new_items": new_items, "error": error}
 
 
@@ -160,12 +161,12 @@ def check_one_page(tracked_page: dict) -> dict:
     except Exception as e:
         error = f"{label}: {e}"
         print(f"ERROR: check failed for {label}: {e}")
-        return _finish(False, checked_at, [], error)
+        return _finish(url, label, False, checked_at, [], error)
 
     if not items:
         error = f"{label}: no items found — the page structure may have changed"
         print(f"WARNING: {error}")
-        return _finish(False, checked_at, [], error)
+        return _finish(url, label, False, checked_at, [], error)
 
     page_state = state["pages"].setdefault(url, {"seen_urls": []})
     seen = set(page_state["seen_urls"])
@@ -207,7 +208,7 @@ def check_one_page(tracked_page: dict) -> dict:
     page_state["seen_urls"] = list(seen | {i["url"] for i in items})
     save_state(state)
 
-    return _finish(True, checked_at, alerted_items, None)
+    return _finish(url, label, True, checked_at, alerted_items, None)
 
 
 def run_check() -> dict:
