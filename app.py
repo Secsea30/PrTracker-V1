@@ -177,6 +177,12 @@ BASE_STYLE = """
   .comfort { background: var(--comfort-bg); color: var(--comfort-text); }
   .sport { background: var(--sport-bg); color: var(--sport-text); }
 
+  .source-badge {
+    display: inline-block; padding: 2px 8px; margin-right: 8px; border-radius: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    color: #ffffff; vertical-align: middle;
+  }
+
   .segmented {
     display: flex; background: var(--bg); border-radius: 10px; padding: 4px; margin-top: 18px; gap: 4px;
   }
@@ -393,10 +399,19 @@ def render_history(limit: int = 15) -> str:
     if not entries:
         return '<p class="placeholder">No changes detected yet — this fills in automatically once PRTracker catches its first new press release.</p>'
 
+    # Older entries were recorded before source_label/badge_color existed —
+    # backfill them from the current tracked-pages config (matched by page
+    # label) so every row still shows the right WAM/MBZ tag, not a blank one.
+    pages_by_label = {p["label"]: p for p in tracked_pages_store.load_pages()}
+
     items_html = ""
     for entry in entries:
+        fallback_page = pages_by_label.get(entry.get("page_label"), {})
+        source_label = entry.get("source_label") or fallback_page.get("source_label") or entry.get("page_label", "PRTracker")
+        badge_color = entry.get("badge_color") or fallback_page.get("badge_color") or tracked_pages_store.DEFAULT_BADGE_COLOR
         items_html += f"""
         <div class="history-item">
+          <span class="source-badge" style="background:{badge_color};">{source_label}</span>
           <a href="{entry['url']}" target="_blank" rel="noopener">{entry['title']}</a>
           <div class="history-meta">
             Detected {format_dt(entry['detected_at'])} &middot; Emailed {format_dt(entry['sent_at'])}
