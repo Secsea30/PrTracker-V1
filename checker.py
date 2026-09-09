@@ -208,13 +208,31 @@ def check_one_page(tracked_page: dict) -> dict:
     new_items = [i for i in items if i["url"] not in seen]
     alerted_items: list[dict] = []
 
+    def _mark_seen(item_url: str) -> None:
+        """Persists a single URL as seen right away, rather than batching
+        the update until the whole check finishes. If the process gets
+        interrupted anywhere after an alert is sent but before state.json
+        is saved — a crash, the watchdog killing a slow later step,
+        anything — an already-sent alert would otherwise leave no record
+        of itself on disk, so the next check re-detects the same URL as
+        new and re-alerts. This happened in production: the same WAM
+        article got emailed twice, 2 minutes apart — exactly one check
+        cycle — because of this exact gap.
+        """
+        seen.add(item_url)
+        page_state["seen_urls"] = list(seen)
+        save_state(state)
+
     if not seen:
         print(f"First run for {label} — recording {len(items)} existing items as the baseline (not alerting on these).")
+        for item in items:
+            _mark_seen(item["url"])
     elif new_items:
         print(f"\n*** {len(new_items)} NEW ITEM(S) FOUND on {label} ***")
         for item in new_items:
             if keyword_filter and not _matches_keyword(item, keyword_filter):
                 print(f"- (skipped, no match for {keyword_filter!r}) {item['title']}")
+                _mark_seen(item["url"])
                 continue
             item["detected_at"] = checked_at
             item["page_label"] = label
@@ -224,6 +242,7 @@ def check_one_page(tracked_page: dict) -> dict:
             print(f"- {item['title']}\n  {item['url']}")
             screenshot_bytes = capture_screenshot(item["url"])
             sent_at = send_alert(item, screenshot_bytes)
+            _mark_seen(item["url"])
             append_history({
                 "title": item["title"],
                 "url": item["url"],
@@ -236,12 +255,6 @@ def check_one_page(tracked_page: dict) -> dict:
             alerted_items.append(item)
     else:
         print(f"No new items on {label}.")
-
-    # Every item seen this check counts as "seen" going forward, whether or
-    # not it matched the keyword filter — otherwise a skipped item would
-    # get re-evaluated (and its body re-fetched) on every future check.
-    page_state["seen_urls"] = list(seen | {i["url"] for i in items})
-    save_state(state)
 
     return _finish(url, label, True, checked_at, alerted_items, None)
 
