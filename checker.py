@@ -24,7 +24,7 @@ from playwright.sync_api import sync_playwright
 import health
 import tracked_pages as tracked_pages_store
 from history import append_history
-from mailer import send_alert, send_health_alert
+from mailer import send_alert, send_health_alert, send_health_resolved
 
 TARGET_URL = "https://www.mohamedbinzayed.ae/en/latest-news-listing"
 STATE_FILE = Path(__file__).parent / "state.json"
@@ -139,6 +139,9 @@ def _finish(page_url: str, page_label: str, ok: bool, checked_at, new_items: lis
     if health_state["should_alert"]:
         print(f"ALERT: {page_label} has failed {health_state['consecutive_failures']} times in a row — sending health alert email.")
         send_health_alert(page_label, error, health_state["consecutive_failures"])
+    elif health_state["should_alert_resolved"]:
+        print(f"RESOLVED: {page_label} is checking successfully again — sending resolved email.")
+        send_health_resolved(page_label)
     return {"ok": ok, "checked_at": checked_at, "new_items": new_items, "error": error}
 
 

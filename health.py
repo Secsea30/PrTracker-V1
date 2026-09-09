@@ -56,16 +56,23 @@ def get_all_health() -> dict:
 
 def record_check(page_url: str, ok: bool, error: str = None) -> dict:
     """Call after every check attempt for a page. Returns that page's updated
-    health state, plus "should_alert": True exactly once when its failures
-    just crossed the threshold."""
+    health state, plus:
+      - "should_alert": True exactly once when its failures just crossed
+        the threshold.
+      - "should_alert_resolved": True exactly once when a check succeeds
+        right after a failure alert had been sent for this page, so a
+        follow-up "back to normal" email can go out.
+    """
     all_state = _load()
     state = all_state.get(page_url, _default_page_state())
     now = datetime.now(timezone.utc).isoformat()
     state["last_check_at"] = now
 
     should_alert = False
+    should_alert_resolved = False
 
     if ok:
+        should_alert_resolved = state.get("already_alerted", False)
         state["last_success_at"] = now
         state["last_error"] = None
         state["consecutive_failures"] = 0
@@ -79,4 +86,4 @@ def record_check(page_url: str, ok: bool, error: str = None) -> dict:
 
     all_state[page_url] = state
     _save(all_state)
-    return {**state, "should_alert": should_alert}
+    return {**state, "should_alert": should_alert, "should_alert_resolved": should_alert_resolved}

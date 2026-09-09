@@ -219,7 +219,32 @@ def send_alert(item: dict, screenshot_bytes: bytes = None) -> datetime:
     return sent_at
 
 
+def _explain_cause(error: str) -> str:
+    """Best-effort plain-English read of a technical error, shown above the
+    raw error in health alert emails so it's clear what actually happened
+    without having to parse a Playwright stack trace."""
+    if not error:
+        return "No error details were recorded for this failure."
+
+    lowered = error.lower()
+    if "hung past" in lowered and "killed" in lowered:
+        return ("The check got stuck and had to be force-stopped after running far longer than normal — "
+                "the target site was likely unresponsive, or something on the server briefly wedged.")
+    if "page crashed" in lowered:
+        return ("The browser crashed while loading the page — usually transient, either a problem on the "
+                "target site or a resource spike on the server.")
+    if "wait_for_selector" in lowered:
+        return ("The page loaded, but the expected content never showed up in time — the site may be slow "
+                "right now, or its layout may have changed.")
+    if "page.goto" in lowered and "timeout" in lowered:
+        return "The page took too long to load at all — likely a slow or temporarily unreachable site."
+    if "no items found" in lowered or "page structure may have changed" in lowered:
+        return "The page loaded, but PRTracker couldn't find the press-release list on it — the site's layout may have changed."
+    return "Unrecognized error — see the technical details below."
+
+
 def build_health_alert_email(page_label: str, error: str, failure_count: int) -> dict:
+    cause = _explain_cause(error)
     subject = f"PRTracker health alert — {page_label} checks are failing"
     html = f"""
     <div style="background:#f4f5f7; padding: 32px 16px; font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
@@ -237,11 +262,51 @@ def build_health_alert_email(page_label: str, error: str, failure_count: int) ->
             {page_label} has failed {failure_count} times in a row
           </h1>
           <p style="margin: 0 0 16px; font-size: 14px; color: #6b7078;">
-            PRTracker may not be catching new press releases from {page_label} right now. This usually means
-            the target site changed something, or there's a network/server problem. Someone should take a look.
+            PRTracker may not be catching new press releases from {page_label} right now.
+          </p>
+          <p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; color: #9599a3; text-transform: uppercase; letter-spacing: 0.04em;">
+            Likely cause
+          </p>
+          <p style="margin: 0 0 16px; font-size: 14px; color: #111318;">
+            {cause}
+          </p>
+          <p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; color: #9599a3; text-transform: uppercase; letter-spacing: 0.04em;">
+            Technical details
           </p>
           <p style="margin: 0; font-size: 13px; color: #9599a3; background:#fafafa; padding: 12px 16px; border-radius: 8px; word-break: break-word;">
-            Last error: {error}
+            {error}
+          </p>
+        </div>
+
+        <div style="padding: 16px 32px; background:#fafafa; border-top: 1px solid #eceef1;">
+          <span style="font-size: 11px; color: #b0b4bc;">Automated health alert &middot; PRTracker</span>
+        </div>
+
+      </div>
+    </div>
+    """
+    return {"subject": subject, "html": html}
+
+
+def build_health_resolved_email(page_label: str) -> dict:
+    subject = f"PRTracker — {page_label} is back to normal"
+    html = f"""
+    <div style="background:#f4f5f7; padding: 32px 16px; font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <div style="max-width: 560px; margin: 0 auto; background:#ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e8e9ec;">
+
+        <div style="height: 4px; background: #1E7A4C;"></div>
+
+        <div style="padding: 20px 32px; border-bottom: 1px solid #eceef1;">
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #1E7A4C;">PRTRACKER</span>
+          <span style="font-size: 13px; color: #9599a3; margin-left: 8px;">Health alert resolved</span>
+        </div>
+
+        <div style="padding: 32px;">
+          <h1 style="margin: 0 0 16px; font-size: 20px; line-height: 1.4; color: #111318; font-weight: 600;">
+            {page_label} is checking successfully again
+          </h1>
+          <p style="margin: 0; font-size: 14px; color: #6b7078;">
+            The earlier failures have cleared — monitoring is back to normal and operation continues. No action needed.
           </p>
         </div>
 
@@ -257,4 +322,9 @@ def build_health_alert_email(page_label: str, error: str, failure_count: int) ->
 
 def send_health_alert(page_label: str, error: str, failure_count: int) -> None:
     email = build_health_alert_email(page_label, error, failure_count)
+    _dispatch([HEALTH_ALERT_RECIPIENT], email)
+
+
+def send_health_resolved(page_label: str) -> None:
+    email = build_health_resolved_email(page_label)
     _dispatch([HEALTH_ALERT_RECIPIENT], email)

@@ -38,6 +38,7 @@ from pathlib import Path
 import health
 import mode
 import tracked_pages as tracked_pages_store
+from mailer import send_health_alert
 
 TICK_SECONDS = 5
 
@@ -67,8 +68,12 @@ def _run_check_with_watchdog(tracked_page: dict) -> None:
             pass  # already gone
         process.wait()
         error = f"{tracked_page['label']}: check hung past {CHECK_TIMEOUT_SECONDS}s and was killed"
-        # The subprocess died before it could record this itself.
-        health.record_check(tracked_page["url"], ok=False, error=error)
+        # The subprocess died before it could record this (or send an alert) itself.
+        health_state = health.record_check(tracked_page["url"], ok=False, error=error)
+        if health_state["should_alert"]:
+            print(f"ALERT: {tracked_page['label']} has failed {health_state['consecutive_failures']} "
+                  f"times in a row — sending health alert email.")
+            send_health_alert(tracked_page["label"], error, health_state["consecutive_failures"])
 
 
 def main():
