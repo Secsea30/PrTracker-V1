@@ -40,6 +40,10 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 FROM_ADDRESS = os.environ.get("ALERT_FROM_ADDRESS", "PRTracker <onboarding@resend.dev>")
 
+# Health alerts ("checks are failing") go only here, not to the full team
+# recipients list — press-release alerts (send_alert) are unaffected.
+HEALTH_ALERT_RECIPIENT = "antony@placecomms.com"
+
 
 def load_recipients() -> list[str]:
     data = json.loads(RECIPIENTS_FILE.read_text())
@@ -252,6 +256,5 @@ def build_health_alert_email(page_label: str, error: str, failure_count: int) ->
 
 
 def send_health_alert(page_label: str, error: str, failure_count: int) -> None:
-    recipients = load_recipients()
     email = build_health_alert_email(page_label, error, failure_count)
-    _dispatch(recipients, email)
+    _dispatch([HEALTH_ALERT_RECIPIENT], email)
