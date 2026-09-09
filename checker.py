@@ -40,13 +40,24 @@ USER_AGENT = (
 
 
 def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
-    """Load a tracked page in a headless browser and read its rendered list of press releases."""
+    """Load a tracked page in a headless browser and read its rendered list of press releases.
+
+    Waits only for the DOM itself (wait_until="domcontentloaded"), not for
+    the network to go fully idle. MBZ's site renders its news list
+    client-side via its own API call after the initial page load, and can
+    have ongoing background network activity beyond that — "networkidle"
+    doesn't actually wait for the content we care about, only for traffic
+    to quiet down in general, and that can hang indefinitely if it never
+    fully does (observed in production: checks hanging for minutes, well
+    past their intended timeout). The explicit wait_for_selector below is
+    the real gate on the content actually being there.
+    """
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(user_agent=USER_AGENT)
-        page.goto(url, wait_until="networkidle", timeout=30_000)
+        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
 
-        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=15_000)
+        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=20_000)
         cards = page.query_selector_all(f"a[href*='{link_pattern}']")
 
         items = {}  # keyed by resolved absolute url, to naturally de-duplicate repeated cards
