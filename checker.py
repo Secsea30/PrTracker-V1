@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import health
@@ -98,9 +99,15 @@ def fetch_article_text(url: str) -> str:
     """Grabs the article's own text, for checking a keyword filter against the body.
 
     Scoped to the <article> element rather than the whole page: the full page
-    body also includes sidebar widgets like "Related" or "Latest News", whose
-    unrelated headlines can otherwise leak into the keyword check and cause
-    false-positive alerts for articles that never actually mention it.
+    body also includes site-wide chrome — a "Related"/"Latest News" sidebar,
+    a rotating "Breaking" ticker banner showing whatever the current top
+    headline is — whose unrelated text can otherwise leak into the keyword
+    check and cause false-positive alerts for articles that never actually
+    mention it. This has happened twice in production from two different
+    elements, so the fallback below deliberately does NOT read the whole
+    page: if <article> can't be found even after waiting for it, that's
+    treated as no usable text rather than a reason to fall back to
+    page-wide content that's known to carry this risk.
     """
     try:
         with sync_playwright() as p:
@@ -108,10 +115,13 @@ def fetch_article_text(url: str) -> str:
             page = browser.new_page(user_agent=USER_AGENT)
             _block_heavy_resources(page)
             page.goto(url, wait_until="networkidle", timeout=30_000)
-            if page.locator("article").count() > 0:
+            try:
+                page.wait_for_selector("article", timeout=10_000)
                 text = page.locator("article").first.inner_text()
-            else:
-                text = page.inner_text("body")
+            except PlaywrightTimeoutError:
+                print(f"WARNING: no <article> element found on {url} — treating as no body text "
+                      f"rather than falling back to the whole page.")
+                text = ""
             browser.close()
             return text
     except Exception as e:
