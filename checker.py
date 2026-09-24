@@ -59,7 +59,31 @@ def _block_heavy_resources(page) -> None:
     )
 
 
+# WAM's server has slow windows where a page load takes far longer than
+# usual (measured from this server: identical requests ranging 1.2s-9.9s,
+# connect times up to 4.5s, while MBZ stays steady at ~1.5s). A single
+# slow load used to count as a failed check, and a few in a row tripped the
+# health alert. One retry with a fresh browser, plus a little more time per
+# attempt, absorbs the one-off slow loads. Worst case is 2 x (45s + 25s) =
+# 140s, well inside the scheduler's 5-minute watchdog.
+_FETCH_ATTEMPTS = 2
+_GOTO_TIMEOUT_MS = 45_000
+_SELECTOR_TIMEOUT_MS = 25_000
+
+
 def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
+    """Reads a tracked page's list of press releases, retrying once on a timeout."""
+    last_error: Exception | None = None
+    for attempt in range(1, _FETCH_ATTEMPTS + 1):
+        try:
+            return _fetch_news_items_once(url, link_pattern)
+        except PlaywrightTimeoutError as e:
+            last_error = e
+            print(f"WARNING: attempt {attempt}/{_FETCH_ATTEMPTS} timed out loading {url}: {str(e).splitlines()[0]}")
+    raise last_error
+
+
+def _fetch_news_items_once(url: str, link_pattern: str) -> list[dict]:
     """Load a tracked page in a headless browser and read its rendered list of press releases.
 
     Waits only for the DOM itself (wait_until="domcontentloaded"), not for
@@ -76,9 +100,9 @@ def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
         browser = p.chromium.launch()
         page = browser.new_page(user_agent=USER_AGENT)
         _block_heavy_resources(page)
-        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        page.goto(url, wait_until="domcontentloaded", timeout=_GOTO_TIMEOUT_MS)
 
-        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=20_000)
+        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=_SELECTOR_TIMEOUT_MS)
         cards = page.query_selector_all(f"a[href*='{link_pattern}']")
 
         items = {}  # keyed by resolved absolute url, to naturally de-duplicate repeated cards
