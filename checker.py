@@ -143,8 +143,18 @@ def _fetch_news_items_once(url: str, link_pattern: str, lean_load: bool) -> list
         return list(items.values())
 
 
-def fetch_article_text(url: str) -> str:
+# Attempts at reading an article's body before giving up on it (see
+# check_one_page). At Sport pace that's roughly 10 minutes of retrying.
+_MAX_UNREADABLE_ATTEMPTS = 5
+
+
+def fetch_article_text(url: str) -> str | None:
     """Grabs the article's own text, for checking a keyword filter against the body.
+
+    Returns None if the page couldn't be loaded at all (timeout, network
+    error) — the caller must treat that as "unknown", NOT as "no match",
+    or a real article gets skipped for good just because the site was slow
+    for a moment. Returns "" if the page loaded but had no <article>.
 
     Scoped to the <article> element rather than the whole page: the full page
     body also includes site-wide chrome — a "Related"/"Latest News" sidebar,
@@ -156,25 +166,45 @@ def fetch_article_text(url: str) -> str:
     page: if <article> can't be found even after waiting for it, that's
     treated as no usable text rather than a reason to fall back to
     page-wide content that's known to carry this risk.
+
+    Like the listing page, WAM's article pages are built client-side from
+    slow-to-download JavaScript, so this gates on <article> appearing
+    ("commit" + wait_for_selector, generous timeouts) rather than on
+    "networkidle", which was timing out. Stylesheets are still allowed
+    here — unlike the listing — and given a short best-effort wait to
+    finish before reading, so text hidden by CSS isn't read as visible.
     """
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page(user_agent=USER_AGENT)
             _block_heavy_resources(page)
-            page.goto(url, wait_until="networkidle", timeout=30_000)
+            page.goto(url, wait_until="commit", timeout=45_000)
             try:
-                page.wait_for_selector("article", timeout=10_000)
-                text = page.locator("article").first.inner_text()
+                page.wait_for_selector("article", timeout=50_000)
             except PlaywrightTimeoutError:
+                # Either the page never rendered (slow site: unknown) or it
+                # rendered with no <article> (no usable text). Tell them
+                # apart by whether the page got as far as its own DOM.
+                loaded = page.evaluate("document.readyState") in ("interactive", "complete")
+                if not loaded:
+                    print(f"WARNING: {url} did not finish rendering in time — treating the article body as unknown.")
+                    browser.close()
+                    return None
                 print(f"WARNING: no <article> element found on {url} — treating as no body text "
                       f"rather than falling back to the whole page.")
-                text = ""
+                browser.close()
+                return ""
+            try:
+                page.wait_for_load_state("load", timeout=10_000)
+            except PlaywrightTimeoutError:
+                pass  # best effort only; the article text is already rendered
+            text = page.locator("article").first.inner_text()
             browser.close()
             return text
     except Exception as e:
         print(f"WARNING: could not read article body of {url}: {e}")
-        return ""
+        return None
 
 
 def capture_screenshot(url: str) -> bytes | None:
@@ -192,12 +222,17 @@ def capture_screenshot(url: str) -> bytes | None:
         return None
 
 
-def _matches_keyword(item: dict, keyword: str) -> bool:
-    """Title match is enough on its own; otherwise falls back to checking the article body."""
+def _matches_keyword(item: dict, keyword: str) -> bool | None:
+    """Title match is enough on its own; otherwise falls back to checking the article body.
+
+    Returns None when the title didn't match and the body couldn't be read,
+    i.e. "can't tell yet" — distinct from a confirmed False."""
     keyword = keyword.lower()
     if keyword in item["title"].lower():
         return True
     body = fetch_article_text(item["url"])
+    if body is None:
+        return None
     return keyword in body.lower()
 
 
@@ -288,10 +323,30 @@ def check_one_page(tracked_page: dict) -> dict:
     elif new_items:
         print(f"\n*** {len(new_items)} NEW ITEM(S) FOUND on {label} ***")
         for item in new_items:
-            if keyword_filter and not _matches_keyword(item, keyword_filter):
-                print(f"- (skipped, no match for {keyword_filter!r}) {item['title']}")
-                _mark_seen(item["url"])
-                continue
+            if keyword_filter:
+                matches = _matches_keyword(item, keyword_filter)
+                if matches is None:
+                    # Couldn't read the article (site slow/unreachable). Marking it
+                    # seen here would skip a real match for good, so leave it
+                    # unseen and let the next check try again — up to a limit, so
+                    # a permanently unreadable page can't be retried forever.
+                    attempts = page_state.setdefault("unreadable_attempts", {})
+                    n = attempts.get(item["url"], 0) + 1
+                    if n < _MAX_UNREADABLE_ATTEMPTS:
+                        attempts[item["url"]] = n
+                        save_state(state)
+                        print(f"- (couldn't read article, will retry next check — attempt {n}/{_MAX_UNREADABLE_ATTEMPTS}) {item['title']}")
+                        continue
+                    print(f"- (GIVING UP after {n} unreadable attempts, skipping — check by hand) {item['title']}\n  {item['url']}")
+                    attempts.pop(item["url"], None)
+                    _mark_seen(item["url"])
+                    continue
+                if not matches:
+                    print(f"- (skipped, no match for {keyword_filter!r}) {item['title']}")
+                    page_state.get("unreadable_attempts", {}).pop(item["url"], None)
+                    _mark_seen(item["url"])
+                    continue
+                page_state.get("unreadable_attempts", {}).pop(item["url"], None)
             item["detected_at"] = checked_at
             item["page_label"] = label
             item["source_label"] = tracked_page.get("source_label", label)
