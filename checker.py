@@ -65,53 +65,68 @@ def _block_heavy_resources(page, blocked_types=_BLOCKED_RESOURCE_TYPES) -> None:
 # 7-18s, while small files and the HTML itself came back in ~1s. WAM's
 # news list is built client-side by that JavaScript, so a browser waiting
 # on those files timed out and a few in a row tripped the health alert
-# (twice that day). Three changes, verified on the server (4/4 loads OK in
+# (twice that day). A page opts in to "lean_load" (tracked_pages.json) to
+# get a load path built for that (verified on the server: 4/4 loads OK in
 # 16-25s versus timing out at 45s before):
-#   - block stylesheets too: they're ~550KB of the stalled downloads and
-#     aren't needed to read links and titles;
-#   - gate on the news links appearing (wait_for_selector) with goto only
-#     waiting for the response to start ("commit"), since
-#     "domcontentloaded" itself waits on those slow files;
-#   - one retry with a fresh browser for a one-off stall.
-# Worst case is 2 x (45s + 50s) = 190s, inside the scheduler's 5-minute watchdog.
+#   - block stylesheets too: ~550KB of the stalled downloads, and not
+#     needed to read links and titles;
+#   - goto only waits for the response to start ("commit") and the news
+#     links appearing is the gate, since "domcontentloaded" itself waits
+#     on those slow files;
+#   - longer timeouts, since a healthy load here still takes ~20s.
+# This is opt-in because it isn't safe everywhere: MBZ's links never count
+# as visible without its stylesheets, so lean mode makes every MBZ check
+# fail. Both paths get one retry with a fresh browser for a one-off stall;
+# worst case for lean is 2 x (45s + 50s) = 190s, inside the scheduler's
+# 5-minute watchdog.
 _FETCH_ATTEMPTS = 2
-_GOTO_TIMEOUT_MS = 45_000
-_SELECTOR_TIMEOUT_MS = 50_000
-_LISTING_BLOCKED_TYPES = _BLOCKED_RESOURCE_TYPES | {"stylesheet"}
+_LEAN_BLOCKED_TYPES = _BLOCKED_RESOURCE_TYPES | {"stylesheet"}
+_LEAN_GOTO_TIMEOUT_MS = 45_000
+_LEAN_SELECTOR_TIMEOUT_MS = 50_000
+_STANDARD_GOTO_TIMEOUT_MS = 30_000
+_STANDARD_SELECTOR_TIMEOUT_MS = 20_000
 
 
-def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
+def fetch_news_items(url: str, link_pattern: str, lean_load: bool = False) -> list[dict]:
     """Reads a tracked page's list of press releases, retrying once on a timeout."""
     last_error: Exception | None = None
     for attempt in range(1, _FETCH_ATTEMPTS + 1):
         try:
-            return _fetch_news_items_once(url, link_pattern)
+            return _fetch_news_items_once(url, link_pattern, lean_load)
         except PlaywrightTimeoutError as e:
             last_error = e
             print(f"WARNING: attempt {attempt}/{_FETCH_ATTEMPTS} timed out loading {url}: {str(e).splitlines()[0]}")
     raise last_error
 
 
-def _fetch_news_items_once(url: str, link_pattern: str) -> list[dict]:
+def _fetch_news_items_once(url: str, link_pattern: str, lean_load: bool) -> list[dict]:
     """Load a tracked page in a headless browser and read its rendered list of press releases.
 
-    Waits only for the response to start (wait_until="commit"), not for the
-    page or the network to finish loading. MBZ's site renders its news list
+    Standard path waits only for the DOM itself (wait_until="domcontentloaded"),
+    not for the network to go fully idle. MBZ's site renders its news list
     client-side via its own API call after the initial page load, and can
     have ongoing background network activity beyond that — "networkidle"
     doesn't actually wait for the content we care about, only for traffic
     to quiet down in general, and that can hang indefinitely if it never
     fully does (observed in production: checks hanging for minutes, well
     past their intended timeout). The explicit wait_for_selector below is
-    the real gate on the content actually being there.
+    the real gate on the content actually being there. See the lean_load
+    note above for the slower-server variant.
     """
+    if lean_load:
+        blocked, wait_until = _LEAN_BLOCKED_TYPES, "commit"
+        goto_timeout, selector_timeout = _LEAN_GOTO_TIMEOUT_MS, _LEAN_SELECTOR_TIMEOUT_MS
+    else:
+        blocked, wait_until = _BLOCKED_RESOURCE_TYPES, "domcontentloaded"
+        goto_timeout, selector_timeout = _STANDARD_GOTO_TIMEOUT_MS, _STANDARD_SELECTOR_TIMEOUT_MS
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(user_agent=USER_AGENT)
-        _block_heavy_resources(page, _LISTING_BLOCKED_TYPES)
-        page.goto(url, wait_until="commit", timeout=_GOTO_TIMEOUT_MS)
+        _block_heavy_resources(page, blocked)
+        page.goto(url, wait_until=wait_until, timeout=goto_timeout)
 
-        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=_SELECTOR_TIMEOUT_MS)
+        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=selector_timeout)
         cards = page.query_selector_all(f"a[href*='{link_pattern}']")
 
         items = {}  # keyed by resolved absolute url, to naturally de-duplicate repeated cards
@@ -235,7 +250,7 @@ def check_one_page(tracked_page: dict) -> dict:
     state.setdefault("pages", {})
 
     try:
-        items = fetch_news_items(url, link_pattern)
+        items = fetch_news_items(url, link_pattern, lean_load=bool(tracked_page.get("lean_load")))
     except Exception as e:
         error = f"{label}: {e}"
         print(f"ERROR: check failed for {label}: {e}")
