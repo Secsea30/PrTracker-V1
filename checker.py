@@ -116,9 +116,16 @@ def _fetch_news_items_once(url: str, link_pattern: str, lean_load: bool) -> list
     if lean_load:
         blocked, wait_until = _LEAN_BLOCKED_TYPES, "commit"
         goto_timeout, selector_timeout = _LEAN_GOTO_TIMEOUT_MS, _LEAN_SELECTOR_TIMEOUT_MS
+        # Without stylesheets, Playwright's default "visible" check can fail
+        # even though the links are plainly in the page (seen in production
+        # on 24 Sep: "locator resolved to 37 elements" 21 times, never
+        # visible, so every attempt timed out). All we read is each link's
+        # href and title text, so "present in the DOM" is the right gate.
+        selector_state = "attached"
     else:
         blocked, wait_until = _BLOCKED_RESOURCE_TYPES, "domcontentloaded"
         goto_timeout, selector_timeout = _STANDARD_GOTO_TIMEOUT_MS, _STANDARD_SELECTOR_TIMEOUT_MS
+        selector_state = "visible"
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -126,14 +133,19 @@ def _fetch_news_items_once(url: str, link_pattern: str, lean_load: bool) -> list
         _block_heavy_resources(page, blocked)
         page.goto(url, wait_until=wait_until, timeout=goto_timeout)
 
-        page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=selector_timeout)
+        page.wait_for_selector(f"a[href*='{link_pattern}']", state=selector_state, timeout=selector_timeout)
         cards = page.query_selector_all(f"a[href*='{link_pattern}']")
 
         items = {}  # keyed by resolved absolute url, to naturally de-duplicate repeated cards
         for card in cards:
             href = card.get_attribute("href")
             heading = card.query_selector("h1, h2, h3, h4")
-            title = heading.inner_text().strip() if heading else card.inner_text().strip()
+            element = heading or card
+            # inner_text() is empty for anything not rendered as visible;
+            # text_content() reads the DOM text regardless (lean mode only —
+            # standard mode waited for visibility, so inner_text() is fine).
+            raw = (element.text_content() if lean_load else element.inner_text()) or ""
+            title = " ".join(raw.split())
             if not href or not title:
                 continue
             absolute_url = urljoin(url, href)
