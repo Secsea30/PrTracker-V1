@@ -13,11 +13,14 @@ failing page doesn't kill the long-running scheduler process.
 
 from __future__ import annotations
 
+import html as html_lib
 import json
+import re
 import sys
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -59,6 +62,70 @@ def _block_heavy_resources(page, blocked_types=_BLOCKED_RESOURCE_TYPES) -> None:
     )
 
 
+# --- WAM's own data feed ---------------------------------------------------
+# WAM's pages are a client-side app: the browser downloads ~1MB of scripts
+# and styles, runs them, and the app then asks WAM's own JSON feed for the
+# list of articles (and, on an article page, for that article's text). From
+# this server those big downloads are unreliable (see the lean_load note
+# below), which is what kept tripping the health alert. The feed itself is
+# small (~18KB), needs no login, and answered 10/10 direct requests in
+# 0.8-2s on 24 Sep — so a page with "wam_api": true in tracked_pages.json
+# reads the feed directly instead of driving a browser. If the feed ever
+# fails or changes shape, the checks fall back to the browser path, so this
+# only ever adds a way to succeed.
+_WAM_ARTICLE_BASE = "https://www.wam.ae/en/article/"
+_API_TIMEOUT_SECONDS = 20
+_API_ATTEMPTS = 2
+
+
+def _get_json(url: str) -> dict:
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    last_error: Exception | None = None
+    for _ in range(_API_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=_API_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read())
+        except Exception as e:  # network error, HTTP error, bad JSON — all just "try again, then fall back"
+            last_error = e
+    raise last_error
+
+
+def _wam_article_url(url_slug: str) -> str:
+    """Builds an article's address exactly the way the browser path reports it
+    (percent-encoded, e.g. ’ -> %E2%80%99, + -> %2B). These addresses are the
+    keys in state.json's seen list, so any difference in spelling would make
+    every already-seen article look new and re-alert the team."""
+    return _WAM_ARTICLE_BASE + quote(url_slug, safe="-._~")
+
+
+def fetch_wam_items_via_api(url: str) -> list[dict]:
+    """Reads the article list from WAM's feed. Raises if the feed fails or
+    doesn't have the expected shape (the caller then falls back to a browser)."""
+    list_path = urlparse(url).path.strip("/")  # e.g. en/list/latest-news
+    data = _get_json("https://www.wam.ae/api/app/views/GetViewByUrl?url=" + quote(list_path, safe="/"))
+    raw_items = data["sections"][0]["articlesResult"]["items"]
+    items = {}
+    for raw in raw_items:
+        title = " ".join(raw["title"].split())
+        article_url = _wam_article_url(raw["urlSlug"])
+        if title and article_url:
+            items[article_url] = {"title": title, "url": article_url}
+    if not items:
+        raise ValueError("WAM feed returned no articles")
+    return list(items.values())
+
+
+def fetch_wam_article_text_via_api(article_url: str) -> str:
+    """Reads an article's body text from WAM's feed (the title is checked
+    separately by _matches_keyword, so it isn't repeated here — this keeps the
+    result equivalent to reading the article body in the browser).
+    Raises if the feed fails or doesn't have the expected shape."""
+    slug = unquote(urlparse(article_url).path.rstrip("/").rsplit("/", 1)[-1])
+    data = _get_json("https://www.wam.ae/api/app/articles/GetArticleBySlug?slug=" + quote(slug, safe=""))
+    text = re.sub(r"<[^>]+>", " ", data["body"] or "")  # body is HTML
+    return " ".join(html_lib.unescape(text).split())
+
+
 # WAM's server serves its larger static files (main.js ~260KB, styles.css
 # ~325KB) very slowly to this server — measured on 24 Sep: single fetches
 # taking the full 45s, and 8 parallel fetches of the same file taking
@@ -87,8 +154,14 @@ _STANDARD_GOTO_TIMEOUT_MS = 30_000
 _STANDARD_SELECTOR_TIMEOUT_MS = 20_000
 
 
-def fetch_news_items(url: str, link_pattern: str, lean_load: bool = False) -> list[dict]:
-    """Reads a tracked page's list of press releases, retrying once on a timeout."""
+def fetch_news_items(url: str, link_pattern: str, lean_load: bool = False, wam_api: bool = False) -> list[dict]:
+    """Reads a tracked page's list of press releases. Tries WAM's own data feed
+    first when the page is set up for it, then a browser (retrying once on a timeout)."""
+    if wam_api:
+        try:
+            return fetch_wam_items_via_api(url)
+        except Exception as e:
+            print(f"WARNING: WAM feed failed ({type(e).__name__}: {str(e)[:120]}) — falling back to the browser.")
     last_error: Exception | None = None
     for attempt in range(1, _FETCH_ATTEMPTS + 1):
         try:
@@ -234,7 +307,7 @@ def capture_screenshot(url: str) -> bytes | None:
         return None
 
 
-def _matches_keyword(item: dict, keyword: str) -> bool | None:
+def _matches_keyword(item: dict, keyword: str, wam_api: bool = False) -> bool | None:
     """Title match is enough on its own; otherwise falls back to checking the article body.
 
     Returns None when the title didn't match and the body couldn't be read,
@@ -242,7 +315,14 @@ def _matches_keyword(item: dict, keyword: str) -> bool | None:
     keyword = keyword.lower()
     if keyword in item["title"].lower():
         return True
-    body = fetch_article_text(item["url"])
+    body = None
+    if wam_api:
+        try:
+            body = fetch_wam_article_text_via_api(item["url"])
+        except Exception as e:
+            print(f"WARNING: WAM feed couldn't give the article text ({type(e).__name__}: {str(e)[:120]}) — falling back to the browser.")
+    if body is None:
+        body = fetch_article_text(item["url"])
     if body is None:
         return None
     return keyword in body.lower()
@@ -291,13 +371,14 @@ def check_one_page(tracked_page: dict) -> dict:
     url = tracked_page["url"]
     link_pattern = tracked_page.get("link_pattern") or tracked_pages_store.DEFAULT_LINK_PATTERN
     keyword_filter = tracked_page.get("keyword_filter")
+    wam_api = bool(tracked_page.get("wam_api"))  # read WAM's data feed, browser as fallback (see fetch_wam_items_via_api)
     print(f"[{checked_at.isoformat()}] Checking {label} ({url}) ...")
 
     state = load_state()
     state.setdefault("pages", {})
 
     try:
-        items = fetch_news_items(url, link_pattern, lean_load=bool(tracked_page.get("lean_load")))
+        items = fetch_news_items(url, link_pattern, lean_load=bool(tracked_page.get("lean_load")), wam_api=wam_api)
     except Exception as e:
         error = f"{label}: {e}"
         print(f"ERROR: check failed for {label}: {e}")
@@ -336,7 +417,7 @@ def check_one_page(tracked_page: dict) -> dict:
         print(f"\n*** {len(new_items)} NEW ITEM(S) FOUND on {label} ***")
         for item in new_items:
             if keyword_filter:
-                matches = _matches_keyword(item, keyword_filter)
+                matches = _matches_keyword(item, keyword_filter, wam_api=wam_api)
                 if matches is None:
                     # Couldn't read the article (site slow/unreachable). Marking it
                     # seen here would skip a real match for good, so leave it
