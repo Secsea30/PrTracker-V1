@@ -52,23 +52,32 @@ USER_AGENT = (
 _BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
 
 
-def _block_heavy_resources(page) -> None:
+def _block_heavy_resources(page, blocked_types=_BLOCKED_RESOURCE_TYPES) -> None:
     page.route(
         "**/*",
-        lambda route: route.abort() if route.request.resource_type in _BLOCKED_RESOURCE_TYPES else route.continue_(),
+        lambda route: route.abort() if route.request.resource_type in blocked_types else route.continue_(),
     )
 
 
-# WAM's server has slow windows where a page load takes far longer than
-# usual (measured from this server: identical requests ranging 1.2s-9.9s,
-# connect times up to 4.5s, while MBZ stays steady at ~1.5s). A single
-# slow load used to count as a failed check, and a few in a row tripped the
-# health alert. One retry with a fresh browser, plus a little more time per
-# attempt, absorbs the one-off slow loads. Worst case is 2 x (45s + 25s) =
-# 140s, well inside the scheduler's 5-minute watchdog.
+# WAM's server serves its larger static files (main.js ~260KB, styles.css
+# ~325KB) very slowly to this server — measured on 24 Sep: single fetches
+# taking the full 45s, and 8 parallel fetches of the same file taking
+# 7-18s, while small files and the HTML itself came back in ~1s. WAM's
+# news list is built client-side by that JavaScript, so a browser waiting
+# on those files timed out and a few in a row tripped the health alert
+# (twice that day). Three changes, verified on the server (4/4 loads OK in
+# 16-25s versus timing out at 45s before):
+#   - block stylesheets too: they're ~550KB of the stalled downloads and
+#     aren't needed to read links and titles;
+#   - gate on the news links appearing (wait_for_selector) with goto only
+#     waiting for the response to start ("commit"), since
+#     "domcontentloaded" itself waits on those slow files;
+#   - one retry with a fresh browser for a one-off stall.
+# Worst case is 2 x (45s + 50s) = 190s, inside the scheduler's 5-minute watchdog.
 _FETCH_ATTEMPTS = 2
 _GOTO_TIMEOUT_MS = 45_000
-_SELECTOR_TIMEOUT_MS = 25_000
+_SELECTOR_TIMEOUT_MS = 50_000
+_LISTING_BLOCKED_TYPES = _BLOCKED_RESOURCE_TYPES | {"stylesheet"}
 
 
 def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
@@ -86,8 +95,8 @@ def fetch_news_items(url: str, link_pattern: str) -> list[dict]:
 def _fetch_news_items_once(url: str, link_pattern: str) -> list[dict]:
     """Load a tracked page in a headless browser and read its rendered list of press releases.
 
-    Waits only for the DOM itself (wait_until="domcontentloaded"), not for
-    the network to go fully idle. MBZ's site renders its news list
+    Waits only for the response to start (wait_until="commit"), not for the
+    page or the network to finish loading. MBZ's site renders its news list
     client-side via its own API call after the initial page load, and can
     have ongoing background network activity beyond that — "networkidle"
     doesn't actually wait for the content we care about, only for traffic
@@ -99,8 +108,8 @@ def _fetch_news_items_once(url: str, link_pattern: str) -> list[dict]:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(user_agent=USER_AGENT)
-        _block_heavy_resources(page)
-        page.goto(url, wait_until="domcontentloaded", timeout=_GOTO_TIMEOUT_MS)
+        _block_heavy_resources(page, _LISTING_BLOCKED_TYPES)
+        page.goto(url, wait_until="commit", timeout=_GOTO_TIMEOUT_MS)
 
         page.wait_for_selector(f"a[href*='{link_pattern}']", timeout=_SELECTOR_TIMEOUT_MS)
         cards = page.query_selector_all(f"a[href*='{link_pattern}']")
