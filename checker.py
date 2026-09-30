@@ -292,19 +292,36 @@ def fetch_article_text(url: str) -> str | None:
         return None
 
 
+# Screenshotting an article waits for "networkidle" — unlike the listing and
+# article-text reads above, this one wants the real photos loaded (it's a
+# picture of the page), so it can't block images/stylesheets the way those
+# do. On WAM specifically that means waiting out the same slow asset
+# downloads described above, so this got the same 30s-timeout failures (5
+# times between 8-29 Sep — rare, and never fatal: the alert email still
+# sends, just without the embedded image — but worth the same fix rather
+# than leaving a second, unfixed copy of the same problem). One retry with
+# a longer timeout, same shape as fetch_news_items above.
+_SCREENSHOT_ATTEMPTS = 2
+_SCREENSHOT_TIMEOUT_MS = 45_000
+
+
 def capture_screenshot(url: str) -> bytes | None:
     """Screenshots the top of the actual article page, for embedding in the alert email."""
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page = browser.new_page(user_agent=USER_AGENT, viewport={"width": 1280, "height": 900})
-            page.goto(url, wait_until="networkidle", timeout=30_000)
-            screenshot_bytes = page.screenshot(full_page=False)
-            browser.close()
-            return screenshot_bytes
-    except Exception as e:
-        print(f"WARNING: could not capture screenshot of {url}: {e}")
-        return None
+    last_error: Exception | None = None
+    for attempt in range(1, _SCREENSHOT_ATTEMPTS + 1):
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                page = browser.new_page(user_agent=USER_AGENT, viewport={"width": 1280, "height": 900})
+                page.goto(url, wait_until="networkidle", timeout=_SCREENSHOT_TIMEOUT_MS)
+                screenshot_bytes = page.screenshot(full_page=False)
+                browser.close()
+                return screenshot_bytes
+        except Exception as e:
+            last_error = e
+            print(f"WARNING: attempt {attempt}/{_SCREENSHOT_ATTEMPTS} could not capture screenshot of {url}: {e}")
+    print(f"WARNING: giving up on screenshot for {url} after {_SCREENSHOT_ATTEMPTS} attempts ({last_error}) — alert will send without an image.")
+    return None
 
 
 def _matches_keyword(item: dict, keyword: str, wam_api: bool = False) -> bool | None:
