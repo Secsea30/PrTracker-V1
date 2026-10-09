@@ -45,7 +45,23 @@ class SheetsLogTests(unittest.TestCase):
         row = sheets_log.build_row(ENTRY)
         # 10:38:17 UTC is 14:38:17 in Gulf Standard Time (UTC+4)
         self.assertEqual(row, {"date": "2026-10-08", "time": "14:38:17", "title": ENTRY["title"],
-                               "source": "WAM", "url": ENTRY["url"]})
+                               "source": "WAM", "url": ENTRY["url"], "body": ""})
+
+    def test_row_carries_the_press_release_text(self):
+        self.assertEqual(sheets_log.build_row(ENTRY, "Full text.\n\nSecond paragraph.")["body"], "Full text.\n\nSecond paragraph.")
+
+    def test_log_alert_sends_the_text_with_the_row(self):
+        with mock.patch.object(sheets_log, "post_rows", side_effect=self._post_ok):
+            sheets_log.log_alert(ENTRY, body="Full text.")
+        self.assertEqual(self.posted[0][0]["body"], "Full text.")
+
+    def test_the_text_survives_the_retry_queue(self):
+        with mock.patch.object(sheets_log, "post_rows", side_effect=OSError("down")):
+            sheets_log.log_alert(ENTRY, body="Full text.")
+        self.assertEqual(json.loads(self.outbox.read_text())[0]["body"], "Full text.")
+        with mock.patch.object(sheets_log, "post_rows", side_effect=self._post_ok):
+            sheets_log.flush_outbox()
+        self.assertEqual(self.posted[0][0]["body"], "Full text.")
 
     def test_date_rolls_over_at_gulf_midnight(self):
         row = sheets_log.build_row({**ENTRY, "sent_at": "2026-10-08T21:30:00+00:00"})  # 01:30 GST next day

@@ -18,6 +18,10 @@ Safety properties, because a sheet problem must never affect alerting:
   sheet, so a retry after a half-finished send, or re-running the backfill,
   is harmless.
 - Times are written in Gulf Standard Time, like the rest of the tool.
+- Each row also carries the press release's full text (release_body.py). If
+  that couldn't be read at the time, the Body cell is left empty, and re-running
+  backfill_sheet.py fills it in later — the sheet only ever fills an *empty*
+  Body, it never overwrites one.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ except ImportError:
 OUTBOX_FILE = Path(__file__).parent / "sheet_outbox.json"
 
 _TIMEOUT_SECONDS = 20
-BATCH_SIZE = 50  # rows per request when catching up on a backlog
+BATCH_SIZE = 20  # rows per request when catching up on a backlog (each row now carries a full press release)
 
 
 def _config() -> tuple[str | None, str | None]:
@@ -51,9 +55,10 @@ def is_configured() -> bool:
     return bool(url and token)
 
 
-def build_row(entry: dict) -> dict:
+def build_row(entry: dict, body: str = "") -> dict:
     """Turns one history entry into the row the sheet stores. `entry` is the
-    same dict that goes into history.json."""
+    same dict that goes into history.json; `body` is the press release's text
+    (see release_body.py), "" if it couldn't be read."""
     sent = localtime.to_local(datetime.fromisoformat(entry["sent_at"]))
     return {
         "date": sent.strftime("%Y-%m-%d"),
@@ -61,6 +66,7 @@ def build_row(entry: dict) -> dict:
         "title": entry["title"],
         "source": entry.get("source_label") or entry.get("page_label") or "",
         "url": entry["url"],
+        "body": body,
     }
 
 
@@ -116,13 +122,13 @@ def flush_outbox() -> None:
         print(f"WARNING: could not update the Google Sheet yet ({type(e).__name__}: {str(e)[:120]}) — will retry on the next check.")
 
 
-def log_alert(entry: dict) -> None:
+def log_alert(entry: dict, body: str = "") -> None:
     """Records one sent alert in the sheet. Never raises."""
     if not is_configured():
         return
     try:
         rows = _load_outbox()
-        rows.append(build_row(entry))
+        rows.append(build_row(entry, body))
         _save_outbox(rows)  # queued first, so nothing is lost if the send below fails
     except Exception as e:
         print(f"WARNING: could not queue a Google Sheet row ({type(e).__name__}: {str(e)[:120]}).")

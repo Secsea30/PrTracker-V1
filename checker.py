@@ -26,6 +26,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import health
+import release_body
 import sheets_log
 import tracked_pages as tracked_pages_store
 from history import append_history
@@ -477,7 +478,11 @@ def check_one_page(tracked_page: dict) -> dict:
                 "sent_at": sent_at.isoformat(),
             }
             append_history(history_entry)
-            sheets_log.log_alert(history_entry)  # no-op unless the Google Sheet is set up; never raises
+            if sheets_log.is_configured():  # the Google Sheet log is optional, and must never disturb a check
+                try:
+                    sheets_log.log_alert(history_entry, body=release_body.fetch_body(item["url"]))
+                except Exception as e:
+                    print(f"WARNING: skipped the Google Sheet log for this release ({type(e).__name__}: {str(e)[:120]})")
             alerted_items.append(item)
     else:
         print(f"No new items on {label}.")
