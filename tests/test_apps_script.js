@@ -16,6 +16,7 @@ function makeEnv() {
       setValue: v => { store.rows[row - 1][col - 1] = v; },
     }),
   };
+  const book = { getSheetByName: name => (name === 'Alerts' && !store.noSheet ? sheet : null) };
   const env = {
     JSON, Set, Array, Object, console,
     LockService: { getScriptLock: () => ({ waitLock: () => { store.locks++; }, releaseLock: () => { store.locks--; } }) },
@@ -23,7 +24,10 @@ function makeEnv() {
       MimeType: { JSON: 'json' },
       createTextOutput: text => ({ text, setMimeType() { return this; } }),
     },
-    SpreadsheetApp: { getActive: () => ({ getSheetByName: name => (name === 'Alerts' && !store.noSheet ? sheet : null) }) },
+    SpreadsheetApp: {
+      getActive: () => (store.standalone ? null : book),
+      openById: id => { store.openedId = id; return store.noFallback ? null : book; },
+    },
   };
   vm.createContext(env);
   const code = fs.readFileSync(path.join(__dirname, '..', 'sheets', 'apps_script.gs'), 'utf8')
@@ -125,6 +129,25 @@ test('multi-paragraph text is stored intact in one cell', () => {
   const { post, store } = makeEnv();
   post({ token: 'secret', rows: [row(1, { body: 'Para one.\n\nPara two.' })] });
   assert.strictEqual(store.rows[1][5], 'Para one.\n\nPara two.');
+});
+test('works when the script was created separately and is not attached to the sheet', () => {
+  const { post, store } = makeEnv();
+  store.standalone = true;
+  assert.deepStrictEqual(post({ token: 'secret', rows: [row(1)] }), { ok: true, added: 1, skipped: 0, filled: 0 });
+  assert.strictEqual(store.openedId, '1F7-I4yHywDX8tN5P5ybyzuU8GoG85PcUz08Zf2TP2kI');
+  assert.strictEqual(store.rows.length, 2);
+});
+test('says so clearly if it can reach no sheet at all', () => {
+  const { post, store } = makeEnv();
+  store.standalone = true; store.noFallback = true;
+  const reply = post({ token: 'secret', rows: [row(1)] });
+  assert.strictEqual(reply.ok, false);
+  assert.ok(/not attached/.test(reply.error));
+});
+test('prefers the attached sheet and does not open by id when attached', () => {
+  const { post, store } = makeEnv();
+  post({ token: 'secret', rows: [row(1)] });
+  assert.strictEqual(store.openedId, undefined);
 });
 test('reports a missing Alerts sheet clearly', () => {
   const { post, store } = makeEnv();

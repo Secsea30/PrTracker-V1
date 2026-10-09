@@ -15,6 +15,11 @@
 
 const TOKEN = 'PASTE-A-LONG-RANDOM-SECRET-HERE';
 
+// The sheet this script writes to (the long code in its web address, between /d/ and /edit).
+// If the script was opened from the sheet's own Extensions > Apps Script menu it finds the sheet
+// by itself; this is the fallback for a script created separately at script.google.com.
+const SPREADSHEET_ID = '1F7-I4yHywDX8tN5P5ybyzuU8GoG85PcUz08Zf2TP2kI';
+
 const ALERTS_SHEET = 'Alerts';
 const SUMMARY_SHEET = 'Summary';
 const HEADERS = ['Date', 'Time (GST)', 'Title', 'Source', 'Link', 'Body', 'Notes'];
@@ -22,9 +27,17 @@ const LINK_COLUMN = 5;  // used to skip rows that are already in the sheet
 const BODY_COLUMN = 6;
 
 
+function spreadsheet() {
+  const attached = SpreadsheetApp.getActive();
+  if (attached) return attached;
+  return SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : null;
+}
+
+
 /** Run this once, by hand. Safe to run again: it never deletes rows. */
 function setup() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = spreadsheet();
+  if (!ss) throw new Error('This script is not attached to a sheet. Set SPREADSHEET_ID at the top.');
   ss.setSpreadsheetTimeZone('Asia/Dubai');
 
   let alerts = ss.getSheetByName(ALERTS_SHEET);
@@ -81,7 +94,9 @@ function doPost(e) {
     }
     if (body.token !== TOKEN) return reply({ ok: false, error: 'unauthorized' });
 
-    const sheet = SpreadsheetApp.getActive().getSheetByName(ALERTS_SHEET);
+    const ss = spreadsheet();
+    if (!ss) return reply({ ok: false, error: 'the script is not attached to a sheet' });
+    const sheet = ss.getSheetByName(ALERTS_SHEET);
     if (!sheet) return reply({ ok: false, error: 'no "Alerts" sheet — run setup first' });
 
     const lastRow = sheet.getLastRow();
