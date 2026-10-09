@@ -26,8 +26,8 @@ const HEADERS = ['Date', 'Time (GST)', 'Title', 'Source', 'Link', 'Body', 'Notes
 const SOURCE_COLUMN = 4;
 const LINK_COLUMN = 5;  // used to skip rows that are already in the sheet
 const BODY_COLUMN = 6;
-const WAM_COLOUR = '#B7D7F0';   // light blue
-const MBZ_COLOUR = '#E1D5F0';   // light purple
+const WAM_COLOUR = '#E3EEF9';   // light blue
+const MBZ_COLOUR = '#EFE9F7';   // light purple
 const ROW_HEIGHT = 21;          // pixels: one line
 
 

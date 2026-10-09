@@ -170,8 +170,8 @@ test('formatting: colours WAM blue and MBZ light purple by the Source cell', () 
   const { format, store } = makeEnv();
   format();
   const byFormula = {}; store.rules.forEach(r => { byFormula[r.formula] = r.colour; });
-  assert.strictEqual(byFormula['=$D2="WAM"'], '#B7D7F0');
-  assert.strictEqual(byFormula['=$D2="MBZ Site"'], '#E1D5F0');
+  assert.strictEqual(byFormula['=$D2="WAM"'], '#E3EEF9');
+  assert.strictEqual(byFormula['=$D2="MBZ Site"'], '#EFE9F7');
   assert.strictEqual(store.rules.length, 2);
 });
 test('formatting: keeps every row one line tall, including future rows', () => {
