@@ -67,9 +67,19 @@ class SheetsLogTests(unittest.TestCase):
         row = sheets_log.build_row({**ENTRY, "sent_at": "2026-10-08T21:30:00+00:00"})  # 01:30 GST next day
         self.assertEqual((row["date"], row["time"]), ("2026-10-09", "01:30:00"))
 
-    def test_source_falls_back_to_page_label(self):
-        row = sheets_log.build_row({**ENTRY, "source_label": ""})
-        self.assertEqual(row["source"], "WAM - UAE President")
+    def test_a_missing_source_is_worked_out_from_the_link(self):
+        wam = {**ENTRY, "source_label": "", "page_label": "WAM - UAE President"}
+        self.assertEqual(sheets_log.build_row(wam)["source"], "WAM")
+        old_mbz = {**ENTRY, "source_label": None, "page_label": "Latest News",
+                   "url": "https://www.mohamedbinzayed.ae/en/latest-news-listing/2026/09/x"}
+        self.assertEqual(sheets_log.build_row(old_mbz)["source"], "MBZ Site")
+
+    def test_a_stored_source_name_wins(self):
+        self.assertEqual(sheets_log.build_row({**ENTRY, "source_label": "Custom"})["source"], "Custom")
+
+    def test_an_unknown_site_falls_back_to_the_page_name(self):
+        row = sheets_log.build_row({**ENTRY, "source_label": "", "url": "https://example.com/a", "page_label": "Other page"})
+        self.assertEqual(row["source"], "Other page")
 
     def test_does_nothing_when_not_configured(self):
         with mock.patch.dict(os.environ, {"SHEET_WEBHOOK_URL": "", "SHEET_WEBHOOK_TOKEN": ""}):

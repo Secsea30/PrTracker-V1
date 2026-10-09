@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 import localtime
+from urllib.parse import urlparse
 
 try:
     from dotenv import load_dotenv
@@ -55,6 +56,22 @@ def is_configured() -> bool:
     return bool(url and token)
 
 
+# The source name for each site. Older history entries didn't store one, so it is
+# worked out from the link; otherwise the same release would show up under
+# different names ("WAM", "WAM - UAE President") and the Summary would split them.
+_SOURCE_BY_DOMAIN = {"wam.ae": "WAM", "mohamedbinzayed.ae": "MBZ Site"}
+
+
+def _source_name(entry: dict) -> str:
+    if entry.get("source_label"):
+        return entry["source_label"]
+    host = urlparse(entry["url"]).netloc.lower()
+    for domain, name in _SOURCE_BY_DOMAIN.items():
+        if host.endswith(domain):
+            return name
+    return entry.get("page_label") or ""
+
+
 def build_row(entry: dict, body: str = "") -> dict:
     """Turns one history entry into the row the sheet stores. `entry` is the
     same dict that goes into history.json; `body` is the press release's text
@@ -64,7 +81,7 @@ def build_row(entry: dict, body: str = "") -> dict:
         "date": sent.strftime("%Y-%m-%d"),
         "time": sent.strftime("%H:%M:%S"),
         "title": entry["title"],
-        "source": entry.get("source_label") or entry.get("page_label") or "",
+        "source": _source_name(entry),
         "url": entry["url"],
         "body": body,
     }
