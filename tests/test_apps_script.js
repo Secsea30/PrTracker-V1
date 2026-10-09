@@ -7,11 +7,21 @@ const assert = require('assert');
 
 function makeEnv() {
   const store = { rows: [['Date', 'Time (GST)', 'Title', 'Source', 'Link', 'Body', 'Notes']], locks: 0 };
+  store.maxRows = 1000; store.rules = []; store.heights = null; store.inserted = 0;
   const sheet = {
     getLastRow: () => store.rows.length,
+    getMaxRows: () => store.maxRows,
+    insertRowsAfter: (after, n) => { store.inserted += n; store.maxRows += n; },
+    setConditionalFormatRules: rules => { store.rules = rules; },
+    setRowHeightsForced: (start, n, h) => { store.heights = { start, n, h }; },
     getRange: (row, col, numRows, numCols) => ({
       getValues: () => store.rows.slice(row - 1, row - 1 + numRows).map(r => r.slice(col - 1, col - 1 + (numCols || 1))),
-      setValues: vals => { vals.forEach((v, i) => { store.rows[row - 1 + i] = v.slice(); }); },
+      setValues: vals => {
+        vals.forEach((v, i) => {
+          if (!store.rows[row - 1 + i]) store.rows[row - 1 + i] = [];
+          v.forEach((cell, j) => { store.rows[row - 1 + i][col - 1 + j] = cell; });  // only the cells in the range, like Sheets
+        });
+      },
       getValue: () => (store.rows[row - 1] || [])[col - 1],
       setValue: v => { store.rows[row - 1][col - 1] = v; },
     }),
@@ -25,6 +35,12 @@ function makeEnv() {
       createTextOutput: text => ({ text, setMimeType() { return this; } }),
     },
     SpreadsheetApp: {
+      newConditionalFormatRule: () => {
+        const rule = {};
+        const b = { whenFormulaSatisfied: f => { rule.formula = f; return b; }, setBackground: c => { rule.colour = c; return b; },
+                    setRanges: r => { rule.ranges = r; return b; }, build: () => rule };
+        return b;
+      },
       getActive: () => (store.standalone ? null : book),
       openById: id => { store.openedId = id; return store.noFallback ? null : book; },
     },
@@ -32,9 +48,10 @@ function makeEnv() {
   vm.createContext(env);
   const code = fs.readFileSync(path.join(__dirname, '..', 'sheets', 'apps_script.gs'), 'utf8')
     .replace("const TOKEN = 'PASTE-A-LONG-RANDOM-SECRET-HERE';", "const TOKEN = 'secret';");
-  vm.runInContext(code + '\nthis.doPost = doPost;', env);
+  vm.runInContext(code + '\nthis.doPost = doPost; this.applyFormatting = applyFormatting;', env);
+  const format = () => env.applyFormatting();
   const post = body => JSON.parse(env.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text);
-  return { post, store };
+  return { post, store, format };
 }
 
 const row = (n, extra) => Object.assign({ date: '2026-10-08', time: '14:38:17', title: 'Title ' + n, source: 'WAM', url: 'https://x/' + n, body: 'Body ' + n }, extra);
@@ -148,6 +165,33 @@ test('prefers the attached sheet and does not open by id when attached', () => {
   const { post, store } = makeEnv();
   post({ token: 'secret', rows: [row(1)] });
   assert.strictEqual(store.openedId, undefined);
+});
+test('formatting: colours WAM blue and MBZ light purple by the Source cell', () => {
+  const { format, store } = makeEnv();
+  format();
+  const byFormula = {}; store.rules.forEach(r => { byFormula[r.formula] = r.colour; });
+  assert.strictEqual(byFormula['=$D2="WAM"'], '#B7D7F0');
+  assert.strictEqual(byFormula['=$D2="MBZ Site"'], '#E1D5F0');
+  assert.strictEqual(store.rules.length, 2);
+});
+test('formatting: keeps every row one line tall, including future rows', () => {
+  const { format, store } = makeEnv();
+  format();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(store.heights)), { start: 2, n: 9999, h: 21 });
+});
+test('formatting: adds room for years of alerts, only once', () => {
+  const { format, store } = makeEnv();
+  format(); assert.strictEqual(store.maxRows, 10000);
+  format(); assert.strictEqual(store.inserted, 9000);
+});
+test('formatting: corrects old Source names and leaves everything else alone', () => {
+  const { post, format, store } = makeEnv();
+  post({ token: 'secret', rows: [row(1, { source: 'Latest News' }), row(2, { source: 'WAM - UAE President' }), row(3, { source: 'WAM' }), row(4, { source: 'MBZ Site' })] });
+  store.rows[1][6] = 'my note';
+  format();
+  same(store.rows.slice(1).map(r => r[3]), ['MBZ Site', 'WAM', 'WAM', 'MBZ Site']);
+  assert.strictEqual(store.rows[1][6], 'my note');
+  assert.strictEqual(store.rows[1][5], 'Body 1');
 });
 test('reports a missing Alerts sheet clearly', () => {
   const { post, store } = makeEnv();

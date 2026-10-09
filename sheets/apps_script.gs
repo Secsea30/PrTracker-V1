@@ -23,8 +23,48 @@ const SPREADSHEET_ID = '1F7-I4yHywDX8tN5P5ybyzuU8GoG85PcUz08Zf2TP2kI';
 const ALERTS_SHEET = 'Alerts';
 const SUMMARY_SHEET = 'Summary';
 const HEADERS = ['Date', 'Time (GST)', 'Title', 'Source', 'Link', 'Body', 'Notes'];
+const SOURCE_COLUMN = 4;
 const LINK_COLUMN = 5;  // used to skip rows that are already in the sheet
 const BODY_COLUMN = 6;
+const WAM_COLOUR = '#B7D7F0';   // light blue
+const MBZ_COLOUR = '#E1D5F0';   // light purple
+const ROW_HEIGHT = 21;          // pixels: one line
+
+
+/**
+ * Colours each row by its Source (WAM blue, MBZ light purple), keeps every row one line tall
+ * (the press release text has line breaks, which would otherwise stretch the rows), makes sure the
+ * sheet has room for years of alerts, and tidies the Source name on any older rows.
+ * Safe to run again at any time: it never deletes or rewrites anything else.
+ */
+function applyFormatting() {
+  const ss = spreadsheet();
+  if (!ss) throw new Error('This script is not attached to a sheet. Set SPREADSHEET_ID at the top.');
+  const sheet = ss.getSheetByName(ALERTS_SHEET);
+
+  // Older rows were saved under the page name instead of the site name.
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    const sources = sheet.getRange(2, SOURCE_COLUMN, lastRow - 1, 1);
+    sources.setValues(sources.getValues().map(function (r) {
+      return [r[0] === 'Latest News' ? 'MBZ Site' : (r[0] === 'WAM - UAE President' ? 'WAM' : r[0])];
+    }));
+  }
+
+  // Room for about 10,000 alerts, so adding rows can never run off the end of the sheet.
+  const wanted = 10000;
+  if (sheet.getMaxRows() < wanted) sheet.insertRowsAfter(sheet.getMaxRows(), wanted - sheet.getMaxRows());
+
+  const area = sheet.getRange(2, 1, sheet.getMaxRows() - 1, HEADERS.length);
+  sheet.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$D2="WAM"').setBackground(WAM_COLOUR).setRanges([area]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$D2="MBZ Site"').setBackground(MBZ_COLOUR).setRanges([area]).build(),
+  ]);
+
+  sheet.setRowHeightsForced(2, sheet.getMaxRows() - 1, ROW_HEIGHT);
+}
 
 
 function spreadsheet() {
@@ -78,6 +118,8 @@ function setup() {
   summary.getRange('D9:D').setNumberFormat('yyyy-mm-dd');
   summary.setColumnWidth(1, 140);
   summary.setColumnWidth(4, 110);
+
+  applyFormatting();
 }
 
 
