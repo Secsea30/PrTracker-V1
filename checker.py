@@ -26,6 +26,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import health
+import sheets_log
 import tracked_pages as tracked_pages_store
 from history import append_history
 from mailer import send_alert, send_health_alert, send_health_resolved
@@ -466,7 +467,7 @@ def check_one_page(tracked_page: dict) -> dict:
             screenshot_bytes = capture_screenshot(item["url"])
             sent_at = send_alert(item, screenshot_bytes)
             _mark_seen(item["url"])
-            append_history({
+            history_entry = {
                 "title": item["title"],
                 "url": item["url"],
                 "page_label": label,
@@ -474,7 +475,9 @@ def check_one_page(tracked_page: dict) -> dict:
                 "badge_color": item["badge_color"],
                 "detected_at": checked_at.isoformat(),
                 "sent_at": sent_at.isoformat(),
-            })
+            }
+            append_history(history_entry)
+            sheets_log.log_alert(history_entry)  # no-op unless the Google Sheet is set up; never raises
             alerted_items.append(item)
     else:
         print(f"No new items on {label}.")

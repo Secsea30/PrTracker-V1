@@ -14,8 +14,10 @@ scheduler.py enforce a real deadline from the outside.
 import json
 import sys
 
+import sheets_log
 from checker import check_one_page
 
 if __name__ == "__main__":
     tracked_page = json.loads(sys.argv[1])
     check_one_page(tracked_page)
+    sheets_log.flush_outbox()  # retries any Google Sheet rows that couldn't be sent earlier
