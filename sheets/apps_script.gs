@@ -1,5 +1,5 @@
 /**
- * PRTracker alert log — the Google Sheet side.
+ * PRTracker alert log - the Google Sheet side.
  *
  * Receives each alert PRTracker sends and adds it as a row on the "Alerts"
  * tab: date, time, title, source, link, and the full text of the press
@@ -60,7 +60,7 @@ function setup() {
   let summary = ss.getSheetByName(SUMMARY_SHEET);
   if (!summary) summary = ss.insertSheet(SUMMARY_SHEET, 1);
   summary.clear();
-  summary.getRange('A1').setValue('PRTracker — alerts sent').setFontWeight('bold').setFontSize(14);
+  summary.getRange('A1').setValue('PRTracker - alerts sent').setFontWeight('bold').setFontSize(14);
   summary.getRange('A3:B5').setValues([
     ['Total alerts', '=COUNTA(Alerts!E2:E)'],
     ['Today', '=COUNTIF(Alerts!A2:A, TODAY())'],
@@ -97,7 +97,7 @@ function doPost(e) {
     const ss = spreadsheet();
     if (!ss) return reply({ ok: false, error: 'the script is not attached to a sheet' });
     const sheet = ss.getSheetByName(ALERTS_SHEET);
-    if (!sheet) return reply({ ok: false, error: 'no "Alerts" sheet — run setup first' });
+    if (!sheet) return reply({ ok: false, error: 'no "Alerts" sheet - run setup first' });
 
     const lastRow = sheet.getLastRow();
     // link -> its row number, for every release already in the sheet
